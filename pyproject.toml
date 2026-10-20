@@ -71,6 +71,8 @@ dependencies = [
 # numpy 2.x 上验证，matplotlib 的 minor 升版历史上多次破坏私有接口
 # （axis3d 几何助手、colorbar 落位），未验证的下一档 minor 不该被顺手装上。
 worker = ["matplotlib>=3.8,<3.12", "numpy>=1.24,<3"]
+# Plot Workbench data import and template stack. The frozen worker has an exact lock.
+workbench = ["pandas>=2,<4", "seaborn>=0.13,<0.14", "openpyxl>=3.1,<4", "xlrd>=2,<3"]
 # Ruff 的上界跟着实测走，与上面 worker 那条同一个理由：ruff 在 1.0 之前会在
 # minor 里把 preview 规则转正，于是**同一份代码、同一份配置**在升一个 minor 之后
 # 可能突然多出几十条诊断——那种红与本次改动无关，只会让人学会忽略 lint 门禁。

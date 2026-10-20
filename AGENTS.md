@@ -1,4 +1,14 @@
-# Tavotto — 仓库级规则
+# Plot Workbench — fork instructions
+
+This repository is a user-authorized derivative of Tavotto v0.18.0, commit
+71c72fdb48f28411bd76a021e5d78d2005e76c8a. The approved Plot Workbench plan
+authorizes new project/template/data workflows and distinct product branding.
+Those explicit requirements override upstream product-name and feature-freeze
+instructions below. Preserve AGPL attribution, engine contracts, session auth,
+worker isolation and transactional verification. Work directly in this requested
+workspace, on workbench/v1. User datasets and generated artifacts never enter Git.
+
+# Tavotto — inherited repository rules
 
 本文件是每次会话都要读的那一份，只放四样：任务路由、跨仓库不变量、验证入口、
 索引。各层规则的**全文按主题**放在 `docs/rules/`（总览与体积预算见

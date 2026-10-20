@@ -252,6 +252,7 @@
     "lineEndpoint": "调整直线端点",
     "lockAspect": "锁定宽高比",
     "lockElement": "锁定图内元素",
+    "open": "打开",
     "lockObject": "锁定对象",
     "mcpOpenFigure": "打开图",
     "moveElement": "移动{{label}}",

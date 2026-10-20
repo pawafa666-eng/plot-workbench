@@ -4347,6 +4347,7 @@ export default interface Resources {
       "moveGuide": "移动参考线",
       "moveObject": "移动对象",
       "moveObjects": "移动 {{count}} 个对象",
+      "open": "打开",
       "pasteObjects_other": "粘贴 {{count}} 个对象",
       "pasteStyle": "粘贴样式",
       "pinLayout": "固定位置",

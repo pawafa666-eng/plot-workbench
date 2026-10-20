@@ -1,0 +1,64 @@
+{
+  "schema": 2,
+  "_comment": [
+    "Plot Workbench Windows scientific runtime; derived from the upstream runtime lock.",
+    "Resolved by scripts/build_worker_runtime.py --resolve, including Excel import/export engines."
+  ],
+  "top_level": [
+    "numpy",
+    "matplotlib",
+    "pandas",
+    "scipy",
+    "seaborn",
+    "pillow",
+    "openpyxl",
+    "xlrd"
+  ],
+  "targets": {
+    "windows-amd64": {
+      "kind": "windows-embeddable",
+      "os": "windows",
+      "arch": "x86_64",
+      "shipped": true,
+      "note": "官方 embeddable 发行版。Python 官方就把它定位成「应用私有的运行时」。",
+      "python": {
+        "version": "3.13.15",
+        "implementation": "cpython",
+        "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+        "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+        "size": 11009825,
+        "stdlib_zip": "python313.zip",
+        "pth": "python313._pth",
+        "doc": "https://docs.python.org/3/using/windows.html#the-embeddable-package"
+      },
+      "pip": {
+        "platforms": [
+          "win_amd64"
+        ],
+        "python_version": "3.13",
+        "implementation": "cp",
+        "abi": "cp313"
+      },
+      "packages": {
+        "contourpy": "1.4.0",
+        "cycler": "0.12.1",
+        "et_xmlfile": "2.0.0",
+        "fonttools": "4.67.0",
+        "kiwisolver": "1.5.1",
+        "matplotlib": "3.11.1",
+        "numpy": "2.5.2",
+        "openpyxl": "3.1.5",
+        "packaging": "26.3",
+        "pandas": "3.0.5",
+        "pillow": "12.3.0",
+        "pyparsing": "3.3.3",
+        "python-dateutil": "2.9.0.post0",
+        "scipy": "1.18.0",
+        "seaborn": "0.13.2",
+        "six": "1.17.0",
+        "tzdata": "2026.5",
+        "xlrd": "2.0.2"
+      }
+    }
+  }
+}

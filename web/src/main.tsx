@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { App } from './App'
+import { WorkbenchApp } from './workbench/WorkbenchApp'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { IconProvider } from './components/ui/Icon'
 import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
@@ -48,7 +48,7 @@ void bootstrapDesktopSession().then((r) => {
       <ErrorBoundary>
         {/* 图标默认档在根上给（Icon.tsx）：不写 size 的图标拿到 14px / 1.75 描边 */}
         <IconProvider>
-          <App />
+          <WorkbenchApp />
         </IconProvider>
       </ErrorBoundary>
     </StrictMode>,

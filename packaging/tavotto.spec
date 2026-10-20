@@ -117,6 +117,15 @@ for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
              "bridge_runner.py", "bridgeboot.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
+# Workbench data jobs and generated adapters execute in the real bundled Python.
+# Frozen PYZ modules are invisible there, so ship each source file explicitly.
+for source in sorted((PKG / "workbench").glob("*.py")):
+    datas.append((str(source), "tavotto/workbench"))
+for asset in sorted((PKG / "workbench" / "previews").rglob("*")):
+    if asset.is_file():
+        destination = Path("tavotto/workbench") / asset.parent.relative_to(PKG / "workbench")
+        datas.append((str(asset), str(destination)))
+
 # 内置渲染 runtime（见文件头说明 3）。
 # TAVOTTO_RUNTIME_SRC 可指到别处；TAVOTTO_REQUIRE_RUNTIME=1 时缺了就直接失败——
 # 发行流水线必须打开它，否则「忘了构建 runtime」会安静地产出一个装完不能渲染的
@@ -223,7 +232,16 @@ print(f"[tavotto.spec] PDFium: {[os.path.basename(b[0]) for b in _pdfium_libs]}�
 # 上缺 ISRG Root X1 时私有 Python 下载以 `private_python_tls` 失败，而源码模式一切正常（2026-09-28 实测的
 # 就是这个形状）。整包子模块点名收进（`_windows` / `_macos` / `_openssl` 按平台条件 import）；打包环境里
 # 没装它就在这里失败，不留到用户机器上。
-from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files  # noqa: E402
+
+# Excel metadata/selection is read by the parent; dataframe creation stays in workers.
+WORKBENCH_EXCEL_MODULES = []
+for _excel_package in ("openpyxl", "xlrd"):
+    _excel_modules = collect_submodules(_excel_package)
+    if _excel_package not in _excel_modules:
+        raise SystemExit(f"Missing Workbench Excel dependency: {_excel_package}")
+    WORKBENCH_EXCEL_MODULES += _excel_modules
+    datas += collect_data_files(_excel_package)
 
 TRUSTSTORE_MODULES = collect_submodules("truststore")
 if "truststore" not in TRUSTSTORE_MODULES:
@@ -248,6 +266,7 @@ a = Analysis(
         *_pk_hidden,
         # 平台原生证书校验（见上；tlstrust 延后 import）
         *TRUSTSTORE_MODULES,
+        *WORKBENCH_EXCEL_MODULES,
     ],
     hookspath=[],
     runtime_hooks=[],
@@ -261,7 +280,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-ICON = str(ROOT / "assets" / "icon" /
+ICON = str(ROOT / "assets" / "workbench" /
            ("icon.icns" if sys.platform == "darwin" else "icon.ico"))
 
 exe = EXE(

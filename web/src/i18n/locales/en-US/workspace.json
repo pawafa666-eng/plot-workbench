@@ -263,6 +263,7 @@
     "lineEndpoint": "Adjust line endpoint",
     "lockAspect": "Lock aspect ratio",
     "lockElement": "Lock figure element",
+    "open": "Open",
     "lockObject": "Lock object",
     "mcpOpenFigure": "Open figure",
     "moveElement": "Move {{label}}",

@@ -1,0 +1,16 @@
+Plot Workbench / 绘图工作台
+Copyright Plot Workbench contributors.
+
+This program is a derivative of Tavotto v0.18.0 by erwanjun and Tavotto contributors.
+Upstream source: https://github.com/Tavotto/Tavotto
+Upstream base commit: 71c72fdb48f28411bd76a021e5d78d2005e76c8a
+Fork source: https://github.com/pawafa666-eng/plot-workbench
+
+Licensed under GNU Affero General Public License version 3 only (AGPL-3.0-only).
+See the accompanying LICENSE for the full license and source obligations.
+The fork preserves Tavotto's rendering engine, protocol and file-format identifiers.
+Its product branding, project/template/data workflow and Windows packaging are modified.
+No official Tavotto update server or telemetry service is used by this fork.
+
+Third-party Python libraries, Python itself and fonts retain their respective licenses.
+The bundled runtime contains its license inventory; approved fonts include their licenses.

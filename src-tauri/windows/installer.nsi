@@ -569,23 +569,23 @@ FunctionEnd
 ; 警告然后把空字符串顶上去——安装器照样打得出来，只是完成页没字。
 ; tests/test_nsis_template.py 拿 tauri.conf.json 的语言表逐个对。
 !ifdef LANG_ENGLISH
-  LangString preparingTavotto  ${LANG_ENGLISH} "Preparing Tavotto"
-  LangString installingTavotto ${LANG_ENGLISH} "Installing Tavotto"
-  LangString finishTitle       ${LANG_ENGLISH} "Tavotto is ready"
-  LangString finishText        ${LANG_ENGLISH} "Tavotto has been installed on this computer."
-  LangString openTavotto       ${LANG_ENGLISH} "Open Tavotto"
-  LangString registeringTavotto ${LANG_ENGLISH} "Registering the Tavotto command line"
-  LangString installDirText    ${LANG_ENGLISH} "Tavotto will be installed in the folder below. To use a different folder, click Browse."
+  LangString preparingTavotto  ${LANG_ENGLISH} "Preparing ${PRODUCTNAME}"
+  LangString installingTavotto ${LANG_ENGLISH} "Installing ${PRODUCTNAME}"
+  LangString finishTitle       ${LANG_ENGLISH} "${PRODUCTNAME} is ready"
+  LangString finishText        ${LANG_ENGLISH} "${PRODUCTNAME} has been installed on this computer."
+  LangString openTavotto       ${LANG_ENGLISH} "Open ${PRODUCTNAME}"
+  LangString registeringTavotto ${LANG_ENGLISH} "Registering the ${PRODUCTNAME} command line"
+  LangString installDirText    ${LANG_ENGLISH} "${PRODUCTNAME} will be installed in the folder below. To use a different folder, click Browse."
   LangString installDirNotWritable ${LANG_ENGLISH} "This folder can't be written to without administrator rights. Choose a folder in your user profile or on another drive."
 !endif
 !ifdef LANG_SIMPCHINESE
-  LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 Tavotto"
-  LangString installingTavotto ${LANG_SIMPCHINESE} "正在安装 Tavotto"
-  LangString finishTitle       ${LANG_SIMPCHINESE} "Tavotto 已安装完成"
-  LangString finishText        ${LANG_SIMPCHINESE} "Tavotto 已经装到这台电脑上。"
-  LangString openTavotto       ${LANG_SIMPCHINESE} "打开 Tavotto"
-  LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 Tavotto 命令行入口"
-  LangString installDirText    ${LANG_SIMPCHINESE} "Tavotto 将安装到下面这个文件夹。要换位置，请点「浏览」。"
+  LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 ${PRODUCTNAME}"
+  LangString installingTavotto ${LANG_SIMPCHINESE} "正在安装 ${PRODUCTNAME}"
+  LangString finishTitle       ${LANG_SIMPCHINESE} "${PRODUCTNAME} 已安装完成"
+  LangString finishText        ${LANG_SIMPCHINESE} "${PRODUCTNAME} 已经装到这台电脑上。"
+  LangString openTavotto       ${LANG_SIMPCHINESE} "打开 ${PRODUCTNAME}"
+  LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 ${PRODUCTNAME} 命令行入口"
+  LangString installDirText    ${LANG_SIMPCHINESE} "${PRODUCTNAME} 将安装到下面这个文件夹。要换位置，请点「浏览」。"
   LangString installDirNotWritable ${LANG_SIMPCHINESE} "没有管理员权限写不进这个文件夹。请换一个用户目录下或其他磁盘上的位置。"
 !endif
 
@@ -887,10 +887,10 @@ Section Install
     Pop $R9
     Pop $R7
     ${If} $R9 != 0
-      DetailPrint "tavotto-cli doctor 未通过（$R9）: $R7"
+      DetailPrint "Plot Workbench CLI 自检未通过（$R9）: $R7"
     ${EndIf}
   ${Else}
-    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Tavotto"
+    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Plot Workbench"
   ${EndIf}
   ; TAVOTTO PATCH END ----------------------------------------------------
 

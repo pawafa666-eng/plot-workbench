@@ -61,5 +61,8 @@ export default defineConfig({
 
   lint: {
     input: ['src/**/*.{ts,tsx}', '!src/**/*.test.{ts,tsx}', '!src/i18n/**'],
+    // Plot Workbench v1 intentionally ships a Chinese-only product interface.
+    // Tavotto's embedded canvas and shell retain the upstream bilingual checks.
+    ignore: ['src/workbench/**'],
   },
 })

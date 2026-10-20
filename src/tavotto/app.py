@@ -168,6 +168,13 @@ from . import (  # noqa: E402 —— 必须在 app 实例创建之后
 
 security.install(app)
 
+# Workbench endpoints are registered after the shared session guard. They do not
+# have a second, weaker authentication path; the same cookie/API credential gate
+# protects the workbench, embedded Tavotto editor, exports, and artifact previews.
+from .workbench.api import register as register_workbench  # noqa: E402
+
+register_workbench(app)
+
 # 打开着的项目：id → ProjectCtx。**一个进程可以同时端着多个项目**——
 # 不同浏览器标签页各开各的图库（标签页把自己的 pj 带在请求上，见
 # `_request_ctx`）。没有任何项目时前端显示 Project Picker。

@@ -19,6 +19,10 @@
 import os
 import sys
 
+# Fork builds never submit upstream telemetry or contact the upstream updater.
+os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
+os.environ["TAVOTTO_NO_UPDATE_CHECK"] = "1"
+
 #: macOS 自带、随系统更新维护的 CA 证书包（`security` 钥匙串里的根证书导出）。
 MACOS_CA_BUNDLE = "/etc/ssl/cert.pem"
 

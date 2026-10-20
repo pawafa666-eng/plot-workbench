@@ -1,3 +1,4 @@
+/** Plot Workbench fork identity; inherited file/clipboard identifiers stay compatible. */
 /**
  * 品牌与格式标识的唯一出处。产品正式名称 Tavotto，拼写与大小写固定，
  * 界面任何地方不得再手写产品名。
@@ -8,10 +9,12 @@
  * 只认两代前的名字、却不认上一代的，那种半吊子状态比干净断裂更难解释。
  * 文档 schema 的迁移（`migrateToProject`，接受 schema 2/3）是另一回事，照旧。
  */
-export const PRODUCT_NAME = 'Tavotto'
+export const PRODUCT_NAME = 'Plot Workbench'
+export const PRODUCT_NAME_ZH = '绘图工作台'
+export const UPSTREAM_URL = 'https://github.com/Tavotto/Tavotto'
 
 /** 仓库与发行地址（与 `engine/brand.py` 的 REPO_URL 同源） */
-export const REPO_URL = 'https://github.com/Tavotto/Tavotto'
+export const REPO_URL = 'https://github.com/pawafa666-eng/plot-workbench'
 export const RELEASES_LATEST_URL = `${REPO_URL}/releases/latest`
 /** 隐私说明（设置页「关于与隐私」、首启遥测询问都链到它） */
 export const PRIVACY_DOC_URL = `${REPO_URL}/blob/main/docs/privacy.md`

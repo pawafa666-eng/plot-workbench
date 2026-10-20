@@ -4078,8 +4078,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "tavotto-desktop"
-version = "0.18.0"
+name = "plot-workbench-desktop"
+version = "1.0.0"
 dependencies = [
  "objc2",
  "percent-encoding",
@@ -4093,7 +4093,6 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
- "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "url",
 ]

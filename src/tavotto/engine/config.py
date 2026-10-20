@@ -1,14 +1,14 @@
 """用户级持久配置与可写数据目录（纯标准库，Flask 父进程 import）。
 
 配置目录（最近项目、每项目设置、CLI 路径等用户级偏好）：
-  macOS   ~/Library/Application Support/Tavotto/config.json
-  Linux   $XDG_CONFIG_HOME/tavotto/config.json（缺省 ~/.config/tavotto/）
-  Windows %APPDATA%/Tavotto/config.json
+  macOS   ~/Library/Application Support/PlotWorkbench/config.json
+  Linux   $XDG_CONFIG_HOME/plot-workbench/config.json（缺省 ~/.config/plot-workbench/）
+  Windows %APPDATA%/PlotWorkbench/config.json
 
 数据目录（渲染缓存、布局、AI 快照、原图备份等运行时产物）：
-  macOS   ~/Library/Application Support/Tavotto/
-  Linux   $XDG_DATA_HOME/tavotto/（缺省 ~/.local/share/tavotto/）
-  Windows %LOCALAPPDATA%/Tavotto/
+  macOS   ~/Library/Application Support/PlotWorkbench/
+  Linux   $XDG_DATA_HOME/plot-workbench/（缺省 ~/.local/share/plot-workbench/）
+  Windows %LOCALAPPDATA%/PlotWorkbench/
 
 装成 pip 包后 site-packages 不可写，运行时产物一律落在数据目录；
 测试可用 TAVOTTO_CONFIG_DIR / TAVOTTO_DATA_DIR 分别重定向。
@@ -26,6 +26,8 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+
+from .brand import APP_DATA_NAME, APP_DATA_SLUG
 
 RECENT_KEEP = 20
 #: 收藏的项目上限：收藏是用户手工挑的，远少于这个数；封顶只为挡住坏请求把配置撑大
@@ -109,11 +111,11 @@ def config_dir() -> Path:
     if override:
         return Path(override)
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Tavotto"
+        return Path.home() / "Library" / "Application Support" / APP_DATA_NAME
     if os.name == "nt":
-        return Path(os.environ.get("APPDATA", str(Path.home()))) / "Tavotto"
+        return Path(os.environ.get("APPDATA", str(Path.home()))) / APP_DATA_NAME
     base = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    return Path(base) / "tavotto"
+    return Path(base) / APP_DATA_SLUG
 
 
 def config_path() -> Path:
@@ -126,12 +128,12 @@ def data_dir() -> Path:
     if override:
         return Path(override)
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Tavotto"
+        return Path.home() / "Library" / "Application Support" / APP_DATA_NAME
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        return Path(base or Path.home()) / "Tavotto"
+        return Path(base or Path.home()) / APP_DATA_NAME
     base = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
-    return Path(base) / "tavotto"
+    return Path(base) / APP_DATA_SLUG
 
 
 def data_path(*parts: str) -> Path:

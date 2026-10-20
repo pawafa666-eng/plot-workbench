@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tavotto",
-  "mainBinaryName": "Tavotto",
-  "version": "0.18.0",
-  "identifier": "com.tavotto.tavotto",
+  "productName": "Plot Workbench",
+  "mainBinaryName": "PlotWorkbench",
+  "version": "1.0.0",
+  "identifier": "io.github.pawafa666-eng.plotworkbench",
   "build": {
     "frontendDist": "shell"
   },
@@ -13,30 +13,21 @@
       "csp": null
     }
   },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/Tavotto/Tavotto/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0NzUwNTc4QzY3QjYyMTEKUldRUlludkdlQVYxbEtlaGEwY1kvNVl2N0ViOFV1bndiNTI5dHdNdzRrRDE5L3NmY0VEWXlQUWMK",
-      "windows": {
-        "installMode": "passive"
-      }
-    }
-  },
+  "plugins": {},
   "bundle": {
     "active": true,
     "category": "Productivity",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "icon": [
-      "icons/128x128.png",
-      "icons/icon.png",
-      "../assets/icon/icon.icns",
-      "../assets/icon/icon.ico"
+      "../assets/workbench/128x128.png",
+      "../assets/workbench/icon.png",
+      "../assets/workbench/icon.ico"
     ],
     "resources": {
       "../dist/Tavotto": "sidecar/Tavotto",
-      "../LICENSE": "LICENSE"
+      "../LICENSE": "LICENSE",
+      "../docs/workbench/ATTRIBUTION.txt": "ATTRIBUTION.txt",
+      "../docs/workbench/usage.md": "usage.md"
     },
     "macOS": {
       "minimumSystemVersion": "14.0"
@@ -49,10 +40,14 @@
           "English"
         ],
         "template": "windows/installer.nsi",
-        "installerIcon": "../assets/icon/icon.ico",
-        "headerImage": "../assets/brand/installer-header.bmp",
-        "sidebarImage": "../assets/brand/installer-sidebar.bmp"
+        "installerIcon": "../assets/workbench/icon.ico",
+        "headerImage": "../assets/workbench/installer-header.bmp",
+        "sidebarImage": "../assets/workbench/installer-sidebar.bmp"
       }
-    }
+    },
+    "shortDescription": "绘图工作台 · 本地科研绘图",
+    "publisher": "Plot Workbench contributors",
+    "copyright": "Plot Workbench contributors; derived from Tavotto (AGPL-3.0-only)",
+    "homepage": "https://github.com/pawafa666-eng/plot-workbench"
   }
 }

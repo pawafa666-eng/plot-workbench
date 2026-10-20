@@ -1,16 +1,18 @@
-"""品牌与格式标识常量（纯标准库；Flask 父进程与 worker 都可 import）。
+"""Plot Workbench product identity and inherited Tavotto format identifiers.
 
-产品正式名称 Tavotto，拼写与大小写固定。
-
-**这一档没有 LEGACY_*，是有意的。** 2026-08-20 从 Magplot 改名时选的是干净
-断裂：`magplot-package` / `.magplot` / `magplot-proof` 一律不再认，Magic Matplot
-时代那一档（`magic-matplot-package` / `.mmpack.zip`）也一并去掉了——只认两代前
-的名字、却不认上一代的，那种半吊子状态比干净断裂更难向用户解释。
-存量项目包需要能打开时，做法是写一个一次性转换脚本，而不是把读取端摊成三档。
-（文档 schema 的迁移是另一回事，`migrateToProject` 那条链照旧。）
+The authorized fork has its own desktop ID, repository, display name and user
+state directory. Internal Python distribution, file formats and worker protocols
+retain Tavotto identifiers so existing engine contracts remain compatible.
 """
 
-PRODUCT_NAME = "Tavotto"
+PRODUCT_NAME = "Plot Workbench"
+PRODUCT_NAME_ZH = "绘图工作台"
+WORKBENCH_VERSION = "1.0.0"
+APP_DATA_NAME = "PlotWorkbench"
+APP_DATA_SLUG = "plot-workbench"
+UPSTREAM_NAME = "Tavotto"
+UPSTREAM_URL = "https://github.com/Tavotto/Tavotto"
+UPSTREAM_COMMIT = "71c72fdb48f28411bd76a021e5d78d2005e76c8a"
 
 PACKAGE_KIND = "tavotto-package"
 PROOF_KIND = "tavotto-proof"
@@ -18,8 +20,8 @@ PACKAGE_EXT = ".tavotto"
 
 # 分发标识：检查更新与 About 里的链接都从这里取，别处不得再手写仓库地址。
 DIST_NAME = "tavotto"  # PyPI / wheel 包名
-REPO_OWNER = "Tavotto"
-REPO_NAME = "Tavotto"
+REPO_OWNER = "pawafa666-eng"
+REPO_NAME = "plot-workbench"
 REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 RELEASES_URL = f"{REPO_URL}/releases"
@@ -90,4 +92,4 @@ DSH_DEFAULT_PROFILE = "web"
 # 桌面壳的 bundle 标识，与 src-tauri/tauri.conf.json 的 identifier 严格同源。
 # 桌面日志目录（tauri 的 app_log_dir）按它推导：macOS 是
 # ~/Library/Logs/<id>/，Windows 是 %LOCALAPPDATA%\<id>\logs\。
-DESKTOP_BUNDLE_ID = "com.tavotto.tavotto"
+DESKTOP_BUNDLE_ID = "io.github.pawafa666-eng.plotworkbench"

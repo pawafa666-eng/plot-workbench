@@ -5,6 +5,10 @@
 # 那个自引用链接恢复回来，**当场顶掉开发者真正的 venv**，然后
 # `.venv/bin/python` 报 "too many levels of symbolic links"。两天内踩了两次。
 .venv
+.workbench-data/
+.workbench-test-data/
+*.workbench.local.json
+.tools/
 __pycache__/
 *.pyc
 

@@ -120,17 +120,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--artifacts", required=True, type=Path, help="收集到的产物目录（递归扫描）")
     ap.add_argument("--tag", required=True, help="Release tag，如 v0.6.1")
-    ap.add_argument("--owner", default="Tavotto")
-    ap.add_argument("--repo", default="tavotto")
+    ap.add_argument("--owner", default=brand.REPO_OWNER)
+    ap.add_argument("--repo", default=brand.REPO_NAME)
     ap.add_argument("--notes", default="", help="更新说明（原样写进清单）")
+    ap.add_argument("--notes-file", type=Path, help="从 UTF-8 文件读取更新说明")
     ap.add_argument("--require", default="", help="必须齐全的平台（逗号分隔），缺一个即失败")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args(argv)
 
+    if args.notes_file and args.notes:
+        ap.error("--notes 与 --notes-file 只能选一个")
+    notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else args.notes
     version = args.tag[1:] if args.tag.startswith("v") else args.tag
     require = [k.strip() for k in args.require.split(",") if k.strip()]
     manifest = build_manifest(
-        args.artifacts, version, args.tag, args.owner, args.repo, args.notes, require
+        args.artifacts, version, args.tag, args.owner, args.repo, notes, require
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

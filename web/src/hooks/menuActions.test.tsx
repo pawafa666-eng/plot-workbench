@@ -27,6 +27,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useUpdateStore } from '@/store/updateStore'
 import { canvasToDoc } from '@/types/document'
 import type { CanvasData, PanelObject } from '@/types/document'
 import { runMenuAction } from './menuActions'
@@ -355,5 +356,18 @@ describe('不带加速键的几条', () => {
     const left = useUiStore.getState().leftOpen
     act(() => runMenuAction('menu-toggle-left'))
     expect(useUiStore.getState().leftOpen).toBe(!left)
+  })
+
+  it('检查更新菜单只打开设置页，不请求 Releases', () => {
+    const originalCheck = useUpdateStore.getState().checkDesktop
+    const checkDesktop = vi.fn(async () => {})
+    useUpdateStore.setState({ checkDesktop })
+
+    act(() => runMenuAction('menu-check-updates'))
+
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('about')
+    expect(checkDesktop).not.toHaveBeenCalled()
+    useUpdateStore.setState({ checkDesktop: originalCheck })
   })
 })

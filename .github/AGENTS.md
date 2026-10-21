@@ -5,6 +5,8 @@
 主题，读那一份细则（各 1–6 KB）与它点名的合同用例，再动手。规则改在细则文件里，
 并同步这里那一行；这里不放第二份全文。
 
+Plot Workbench fork currently ships only `.github/workflows/workbench-build.yml`; the inherited PR/merge-queue CI rules below describe Tavotto upstream and do not claim those lanes run in this fork. Fork release requirements are maintained in `docs/workbench/updating.md`; upstream CI-lane background is in `docs/rules/ci/ci-lanes.md`.
+
 ## 本层不可破坏
 
 - **CI 按发生时机分工**：PR = 快速反馈；merge_group = 完整合并资格的唯一常规执行点；
@@ -34,7 +36,7 @@
 
 | 改到 | 主题（细则在 `docs/rules/ci/`） | 必守要点 | 看护 |
 | --- | --- | --- | --- |
-| `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py` | CI 分层 → `ci-lanes.md` | 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记） | `tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py` |
+| `.github/workflows/workbench-build.yml` 的构建 / tag 签名 / Release 发布 | Plot Workbench 更新发布 → `docs/workbench/updating.md` | 分支构建不启用 updater；tag 构建须有签名密钥且先验证签名；只有发布 job 有 `contents: write` | `tests/test_workbench_release_workflow.py`、`tests/test_workbench_packaging.py`、`tests/test_updater_manifest.py` |
 | 任何新门禁 / 豁免表 / 「最近跑过没有」的判据 | 门禁纪律 → `gate-discipline.md` | 手工反证一次并写进 PR；豁免要写得出理由、区分「豁免」与「使能」；数有结论的 run；别人电脑上的 bug 先写用例 | `tests/test_windows_regressions.py` |
 | `docs/features/registry.json`、`web/e2e/features.spec.ts`、任何带 `@feature:` 标签或被登记的 e2e、`scripts/ci/feature_registry.py`、`web/scripts/e2e-skip-scan.mjs` | 功能登记表（ADR 0097）→ `feature-registry.md` | 每个 active 功能至少一条真浏览器 e2e、不许带 skip / fixme / fail；功能下线改 `removed`（原因 / 日期 / 批准人）+ `feature:removal` 标签，不许删条目；新功能同 PR 登记；合并态真跑里 skipped / 缺席都判红 | `tests/test_feature_registry.py`、`node web/scripts/e2e-skip-scan.mjs --self-test` |
 | `python-lint` job、`pyproject.toml` 的 `[tool.ruff]` | Ruff 这一格 → `ruff-lint-lane.md` | 规则与豁免只在 `pyproject.toml`，CI 不 `--fix`；check 与 format 两个独立结论；新增 sys.path 源码根要回来审 `src` | `tests/test_merge_queue_workflows.py` |

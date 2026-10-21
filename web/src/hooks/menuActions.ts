@@ -9,7 +9,6 @@ import { runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinato
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useUpdateStore } from '@/store/updateStore'
 import { deleteSelection, inFastEdit, runUndoRedo, runZoomCommand } from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
@@ -149,9 +148,8 @@ function performMenuAction(action: MenuAction) {
       ui.setSettingsOpen(true)
       break
     case 'menu-check-updates':
-      // 与设置页「检查更新」按钮同一个 action；它自己挡并发
+      // 只导航到更新设置；Release 请求必须由设置页里的明确按钮触发。
       ui.setSettingsOpen(true, 'about')
-      void useUpdateStore.getState().checkDesktop()
       break
     case 'menu-diagnostics':
       ui.setSettingsOpen(true, 'diagnostics')

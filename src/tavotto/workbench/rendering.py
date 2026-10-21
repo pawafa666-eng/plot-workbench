@@ -181,6 +181,8 @@ class RenderService:
             python, source = pool.resolve_worker_python(str(directory), script="base.py")
             bundled = source == pool.SOURCE_BUNDLED
             env = runtime.probe_env(python, bundled=bundled)
+            if env is None:
+                env = os.environ.copy()
             env["MPLBACKEND"] = "Agg"
             env["PYTHONIOENCODING"] = "utf-8"
             env["TAVOTTO_NO_TELEMETRY"] = "1"

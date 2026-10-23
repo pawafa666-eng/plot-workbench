@@ -244,7 +244,11 @@ for index in range(2):
                     body={"format": "png", "stem": stem},
                     headers=auth,
                 )
-                assert Path(exported["path"]).is_relative_to(working_folder / ".plot-workbench")
+                # Windows may return RUNNER~1 for TEMP while the service stores
+                # its full path. Compare filesystem identities, not spellings.
+                assert Path(exported["path"]).resolve().is_relative_to(
+                    (working_folder / ".plot-workbench").resolve()
+                )
                 assert Path(exported["path"]).read_bytes().startswith(b"\x89PNG")
             assert {item.name for item in working_folder.iterdir()} == {
                 "values.csv",

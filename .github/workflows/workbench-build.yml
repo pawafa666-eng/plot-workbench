@@ -181,9 +181,10 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --draft \
             --notes-file release-notes.md
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release-metadata.json
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > release-list.json
+          release_id="$(python3 scripts/select_workbench_draft.py --releases release-list.json --tag "$GITHUB_REF_NAME" --out release-metadata.json)"
           python3 scripts/make_updater_manifest.py \
             --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
             --require windows-x86_64 --notes-file release-notes.md \
             --out release-assets/latest.json --published-release release-metadata.json
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -f make_latest=true > /dev/null

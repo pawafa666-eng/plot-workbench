@@ -73,4 +73,25 @@ def test_only_the_publish_job_gets_release_write_permission_after_validation():
     assert "gh release create" in release
     assert "--draft" in release
     assert release.index("--draft") < release.index("--published-release")
-    assert release.index("--published-release") < release.index("--draft=false")
+    assert "select_workbench_draft.py" in release
+    assert release.index("select_workbench_draft.py") < release.index("--published-release")
+    assert release.index("--published-release") < release.index("-F draft=false")
+    assert "releases/${release_id}" in release
+
+
+def test_select_draft_accepts_only_one_matching_unpublished_release(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "select_draft", ROOT / "scripts/select_workbench_draft.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    draft = {"id": 123, "tag_name": "v1.1.2", "draft": True, "assets": []}
+    other = {"id": 456, "tag_name": "v1.0.9", "draft": False}
+    assert module.select_draft([other, draft], "v1.1.2") == draft
+    import pytest
+
+    for releases in ([other], [draft, draft], [{**draft, "draft": False}], [{**draft, "id": True}]):
+        with pytest.raises(ValueError):
+            module.select_draft(releases, "v1.1.2")

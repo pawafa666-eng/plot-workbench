@@ -3659,3 +3659,24 @@ def test_workbench_schema_checks_tagged_cells_without_parent_pandas(monkeypatch)
     assert validate_schema(snapshot, EXAMPLES[1]["schema"]) == []
     snapshot["values"][0][1] = {"$type": "timestamp", "value": "2026-10-23"}
     assert validate_schema(snapshot, EXAMPLES[1]["schema"])[0]["code"] == "dtype_mismatch"
+
+
+def test_frozen_worker_runtime_files_stay_data_below_runtime(tmp_path):
+    """A second Python distribution must not contribute DLLs to the parent root."""
+    from freeze_runtime import runtime_data_toc
+
+    runtime = tmp_path / "runtime"
+    (runtime / "Lib").mkdir(parents=True)
+    files = {
+        "libssl-3.dll": b"worker ssl",
+        "_ssl.pyd": b"worker ssl extension",
+        "Lib/data.py": b"data",
+    }
+    for relative, payload in files.items():
+        (runtime / relative).write_bytes(payload)
+    toc = runtime_data_toc(runtime)
+    assert len(toc) == len(files)
+    for destination, source, kind in toc:
+        relative = Path(destination).relative_to("runtime").as_posix()
+        assert kind == "DATA"
+        assert Path(source).read_bytes() == files[relative]

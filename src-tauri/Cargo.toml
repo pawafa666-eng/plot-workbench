@@ -2,7 +2,7 @@
 # 架构与安全模型见 docs/adr/0002-tauri-desktop-shell.md。
 [package]
 name = "plot-workbench-desktop"
-version = "1.0.2"
+version = "1.0.3"
 description = "Plot Workbench 科研绘图工作台"
 edition = "2021"
 license = "AGPL-3.0-only"

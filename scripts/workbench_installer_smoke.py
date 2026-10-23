@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -55,8 +56,53 @@ def close_window(pid: int) -> None:
     user.EnumWindows(visit, 0)
 
 
+def shell_listeners(parent_pid: int, sidecar: Path) -> list[tuple[int, int]]:
+    """Read listeners owned by this shell's exact installed child executable.
+
+    Rust consumes and removes the handshake immediately. It is not a durable
+    readiness signal for an observer polling independently of the shell.
+    """
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    query = f"""
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+    $wbChildren = @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {int(parent_pid)}')
+    $wbSockets = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
+    @($wbChildren | ForEach-Object {{
+      $wbProcess = $_
+      $wbPorts = @($wbSockets | Where-Object {{
+        $_.OwningProcess -eq $wbProcess.ProcessId -and $_.LocalAddress -eq '127.0.0.1'
+      }} | ForEach-Object LocalPort)
+      [pscustomobject]@{{pid=$wbProcess.ProcessId; exe=$wbProcess.ExecutablePath; ports=$wbPorts}}
+    }}) | ConvertTo-Json -Compress -Depth 4
+    """
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", query],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=20,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Could not inspect the desktop child listeners: {result.stderr}")
+    records = json.loads(result.stdout.strip() or "[]")
+    if isinstance(records, dict):
+        records = [records]
+    expected = os.path.normcase(str(sidecar.resolve()))
+    return [
+        (int(record["pid"]), int(port))
+        for record in records
+        if record.get("exe") and os.path.normcase(str(Path(record["exe"]).resolve())) == expected
+        for port in record.get("ports", [])
+        if 0 < int(port) < 65536
+    ]
+
+
 def shell_smoke(shell: Path, env: dict) -> None:
-    before = set(Path(tempfile.gettempdir()).glob("tavotto-handshake-*.json"))
     process = subprocess.Popen([str(shell)], env=env, cwd=shell.parent)
     side_pid = None
     try:
@@ -64,23 +110,24 @@ def shell_smoke(shell: Path, env: dict) -> None:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise RuntimeError(f"Desktop shell exited early: {process.returncode}")
-            for handshake in (
-                set(Path(tempfile.gettempdir()).glob("tavotto-handshake-*.json")) - before
+            for child_pid, port in shell_listeners(
+                process.pid, shell.parent / "sidecar/Tavotto/Tavotto.exe"
             ):
-                # The shell includes its own PID in the public handshake filename.
-                if not handshake.name.startswith(f"tavotto-handshake-{process.pid}-"):
-                    continue
                 try:
-                    state = json.loads(handshake.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if state.get("ready"):
-                    side_pid = state["pid"]
-                    with urllib.request.urlopen(
-                        f"http://127.0.0.1:{state['port']}/", timeout=10
-                    ) as response:
+                    base = f"http://127.0.0.1:{port}"
+                    with urllib.request.urlopen(f"{base}/", timeout=10) as response:
                         assert response.status == 200
-                    break
+                    try:
+                        urllib.request.urlopen(f"{base}/api/session/ping", timeout=10)
+                    except urllib.error.HTTPError as error:
+                        if error.code != 401:
+                            raise
+                    else:
+                        raise RuntimeError("Desktop sidecar authentication is not enforced")
+                except (OSError, urllib.error.URLError):
+                    continue
+                side_pid = child_pid
+                break
             if side_pid:
                 break
             time.sleep(0.25)

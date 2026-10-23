@@ -142,10 +142,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            --field tag_name="${GITHUB_REF_NAME}" \
-            --field target_commitish="${GITHUB_SHA}" \
-            --jq .body > release-notes.md
+          notes="docs/workbench/releases/${GITHUB_REF_NAME}.md"
+          if [[ -f "$notes" ]]; then
+            cp -- "$notes" release-notes.md
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              --field tag_name="${GITHUB_REF_NAME}" \
+              --field target_commitish="${GITHUB_SHA}" \
+              --jq .body > release-notes.md
+          fi
       - name: Validate signed update manifest
         run: >-
           python3 scripts/make_updater_manifest.py

@@ -33,12 +33,13 @@ pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w "$env:USERPROFILE\.tauri\plot
 
 ## 发布新版本
 
-早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。首个带更新器的稳定版为 `1.0.1`；早期用户要先从 Releases 手动下载并覆盖安装一次，之后才可在软件内更新。每次发布新版本时，将以下版本保持一致：
+早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。带更新器的正式安装包从 `1.0.3` 开始发布；早期用户要先从 Releases 手动下载并覆盖安装一次，之后才可在软件内更新。每次发布新版本时，将以下版本保持一致：
 
 - `src/tavotto/engine/brand.py` 的 `WORKBENCH_VERSION`
 - `src-tauri/tauri.conf.json` 的 `version`
 - `src-tauri/Cargo.toml` 的包版本
+- `src-tauri/Cargo.lock` 中 `plot-workbench-desktop` 的包版本
 
-提交版本变更后创建同名稳定标签，例如 `v1.0.1`，并推送该标签。Windows 工作流会运行测试、构建并安装冒烟、验证更新包签名、生成只含 `windows-x86_64` 的 `latest.json`，再由只有发布 job 拥有的 GitHub 写权限创建 Release。标签与应用版本不一致、版本不高于 `1.0.0`、任一密钥缺失、签名无效或资产不完整，都会阻止发布。
+提交版本变更后创建同名稳定标签，例如 `v1.0.3`，并推送该标签。Windows 工作流会运行测试、构建并安装冒烟、验证更新包签名、生成只含 `windows-x86_64` 的 `latest.json`，再由只有发布 job 拥有的 GitHub 写权限创建 Release。标签与应用版本不一致、版本不高于 `1.0.0`、任一密钥缺失、签名无效或资产不完整，都会阻止发布。
 
 保持同一对密钥。更换公钥后，已经安装的版本仍信任旧公钥，不能通过新密钥收到更新；这时需要用户从 Releases 手动下载并安装新版。

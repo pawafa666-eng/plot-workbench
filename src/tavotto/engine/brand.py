@@ -7,7 +7,7 @@ retain Tavotto identifiers so existing engine contracts remain compatible.
 
 PRODUCT_NAME = "Plot Workbench"
 PRODUCT_NAME_ZH = "绘图工作台"
-WORKBENCH_VERSION = "1.0.2"
+WORKBENCH_VERSION = "1.0.3"
 APP_DATA_NAME = "PlotWorkbench"
 APP_DATA_SLUG = "plot-workbench"
 UPSTREAM_NAME = "Tavotto"

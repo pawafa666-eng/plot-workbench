@@ -21,6 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -125,7 +126,19 @@ def validate_published_assets(manifest: dict, release: dict) -> None:
     """Compare URLs against GitHub's actual names before exposing the draft."""
     if release.get("tag_name") != f"v{manifest['version']}":
         raise SystemExit("The uploaded release assets belong to a different version")
-    urls = {asset.get("browser_download_url") for asset in release.get("assets", [])}
+    urls = set()
+    for asset in release.get("assets", []):
+        url = asset.get("browser_download_url")
+        # A GitHub draft exposes temporary untagged-* URLs. Only for drafts,
+        # derive the future public URL from GitHub's actual asset filename and
+        # tag. Published releases must already expose the exact final URL.
+        if release.get("draft") is True and isinstance(url, str):
+            temporary = re.fullmatch(
+                r"(https://github\.com/[^/]+/[^/]+/releases/download/)untagged-[a-f0-9]+/(.+)", url
+            )
+            if temporary and unquote(temporary[2]) == asset.get("name"):
+                url = f"{temporary[1]}{release['tag_name']}/{temporary[2]}"
+        urls.add(url)
     for platform, entry in manifest["platforms"].items():
         if entry["url"] not in urls or entry["url"] + ".sig" not in urls:
             raise SystemExit(

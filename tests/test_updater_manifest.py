@@ -42,6 +42,31 @@ def test_manifest_uses_the_filename_github_publishes_for_a_spaced_product(tmp_pa
     assert windows["signature"] == "SIGNED-ARCHIVE"
 
 
+def test_draft_temporary_urls_are_checked_against_actual_uploaded_names(tmp_path):
+    _artifact(tmp_path, "Plot Workbench_1.1.2_x64-setup.nsis.zip", "SIGNED")
+    manifest = mod.build_manifest(
+        tmp_path, "1.1.2", "v1.1.2", "pawafa666-eng", "plot-workbench", ""
+    )
+    name = "Plot.Workbench_1.1.2_x64-setup.nsis.zip"
+    prefix = mod.brand.REPO_URL + "/releases/download/untagged-abc123/"
+    release = {
+        "tag_name": "v1.1.2",
+        "draft": True,
+        "assets": [
+            {"name": name, "browser_download_url": prefix + name},
+            {"name": name + ".sig", "browser_download_url": prefix + name + ".sig"},
+        ],
+    }
+    mod.validate_published_assets(manifest, release)
+    # A public release must already expose its final URLs.
+    with pytest.raises(SystemExit):
+        mod.validate_published_assets(manifest, {**release, "draft": False})
+    # Metadata names must agree with the URL, rather than assuming local names.
+    release["assets"][0]["name"] = "different-archive.zip"
+    with pytest.raises(SystemExit):
+        mod.validate_published_assets(manifest, release)
+
+
 def test_cli_rejects_an_update_url_absent_from_actual_uploaded_assets(tmp_path):
     _artifact(tmp_path / "updater", "Plot Workbench_1.0.9_x64-setup.nsis.zip")
     metadata = tmp_path / "release.json"

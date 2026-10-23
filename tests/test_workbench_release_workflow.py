@@ -77,6 +77,8 @@ def test_only_the_publish_job_gets_release_write_permission_after_validation():
     assert release.index("select_workbench_draft.py") < release.index("--published-release")
     assert release.index("--published-release") < release.index("-F draft=false")
     assert "releases/${release_id}" in release
+    assert release.count("--published-release") == 2
+    assert release.index("-F draft=false") < release.rindex("--published-release")
 
 
 def test_select_draft_accepts_only_one_matching_unpublished_release(tmp_path):

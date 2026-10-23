@@ -61,6 +61,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Workbench frontend tests failed" }
           python -m ruff check src/tavotto/workbench tests/test_workbench_api.py tests/test_workbench_data.py tests/test_workbench_rendering.py tests/test_workbench_store.py tests/test_workbench_tavotto.py tests/test_workbench_packaging.py tests/test_workbench_release_workflow.py tests/test_updater_manifest.py scripts/workbench_api_smoke.py scripts/workbench_build.py scripts/workbench_brand_assets.py scripts/workbench_generate_examples.py scripts/workbench_installer_smoke.py scripts/make_updater_manifest.py
           if ($LASTEXITCODE -ne 0) { throw "Workbench lint failed" }
+          python -m ruff check scripts/select_workbench_draft.py
+          if ($LASTEXITCODE -ne 0) { throw "Release metadata lint failed" }
           pnpm --dir web lint
           if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed" }
       - name: Build Windows installer
@@ -187,4 +189,8 @@ jobs:
             --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
             --require windows-x86_64 --notes-file release-notes.md \
             --out release-assets/latest.json --published-release release-metadata.json
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -f make_latest=true > /dev/null
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -f make_latest=true > published-release.json
+          python3 scripts/make_updater_manifest.py \
+            --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
+            --require windows-x86_64 --notes-file release-notes.md \
+            --out release-assets/latest.json --published-release published-release.json

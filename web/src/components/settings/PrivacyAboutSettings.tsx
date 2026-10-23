@@ -43,7 +43,7 @@ export function PrivacyAboutSettings() {
     if (statusVersion) return
     let live = true
     fetchBuildVersion()
-      .then((r) => live && setFallbackVersion(r.version))
+      .then((r) => live && setFallbackVersion(r.app_version ?? r.version))
       .catch(() => {})
     return () => {
       live = false

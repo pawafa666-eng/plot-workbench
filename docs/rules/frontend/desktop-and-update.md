@@ -18,6 +18,8 @@
   `checkDesktop()`；菜单项只导航到「设置 → 关于与隐私」。只有设置页「立即检查」按钮
   才访问 Tauri updater endpoint，检查结果显示在当前设置页。恢复入口由同一页的 Releases
   链接提供。`App.tsx` 不挂载 `UpdateNoticeDialog`。
+- 工作台根组件挂载同一个 `SettingsDialog`，顶栏提供设置入口；应用设置、更新与诊断菜单
+  不要求先打开上游画布项目，仍统一交给 `runMenuAction()` 分派。
 - 桌面壳使用 Tauri updater，浏览器/Python 的 `/api/update/*` 是另一通道；桌面模式后端
   仍应禁用 Python updater。壳侧签名、release-only 配置和权限细节见 `src-tauri/AGENTS.md`。
 

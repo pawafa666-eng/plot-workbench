@@ -32,6 +32,23 @@ def test_actual_desktop_config_is_an_independent_fork():
     assert brand.PACKAGE_EXT == ".tavotto"
 
 
+def test_user_facing_workbench_and_desktop_metadata_share_the_release_version(
+    tmp_path, monkeypatch
+):
+    from tavotto import app as application
+    from tavotto.workbench.api import WorkbenchManager
+
+    manager = WorkbenchManager(tmp_path / "data")
+    assert manager.status()["version"] == brand.WORKBENCH_VERSION
+    monkeypatch.setitem(application.app.config, "TAVOTTO_DESKTOP_MODE", True)
+    with application.app.test_request_context():
+        assert (
+            application._updater_disabled_in_desktop().get_json()["current"]
+            == brand.WORKBENCH_VERSION
+        )
+        assert application.api_version().get_json()["app_version"] == brand.WORKBENCH_VERSION
+
+
 def test_release_overlay_embeds_the_fork_endpoint_and_public_key():
     overlay = builder.updater_overlay("minisign-public-key")
     assert overlay == {

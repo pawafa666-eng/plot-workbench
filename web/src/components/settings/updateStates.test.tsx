@@ -390,7 +390,7 @@ describe('完成', () => {
 })
 
 describe('版本号不依赖更新接口', () => {
-  it('更新接口失败（status 取不到）时，关于页的产品头仍显示版本', async () => {
+  it.each([undefined, '1.0.5'])('更新接口失败时优先显示应用版本 %s', async (appVersion) => {
     seed({ status: null })
     vi.stubGlobal(
       'fetch',
@@ -398,7 +398,7 @@ describe('版本号不依赖更新接口', () => {
         String(input).includes('/api/version')
           ? Promise.resolve({
               ok: true,
-              json: () => Promise.resolve({ build: 'dev', version: '0.99.1' }),
+              json: () => Promise.resolve({ build: 'dev', version: '0.99.1', app_version: appVersion }),
             } as Response)
           : Promise.reject(new Error('更新接口不通')),
       ),
@@ -410,6 +410,6 @@ describe('版本号不依赖更新接口', () => {
       root.render(<PrivacyAboutSettings />)
     })
     await act(async () => {})
-    expect(text()).toContain('v0.99.1')
+    expect(text()).toContain(`v${appVersion ?? '0.99.1'}`)
   })
 })

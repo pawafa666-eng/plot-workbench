@@ -71,8 +71,11 @@ const MENU_SCOPE: Record<MenuAction, DiscreteScope> = {
   'menu-diagnostics': 'app',
 }
 
-/** Project Picker 上也认的几条（那里的输入框也要能 ⌘Z） */
-const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set(['menu-open-project', 'menu-undo', 'menu-redo'])
+/** App settings also work before opening an upstream canvas project. */
+const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set([
+  'menu-open-project', 'menu-undo', 'menu-redo',
+  'menu-settings', 'menu-check-updates', 'menu-diagnostics',
+])
 
 /**
  * 系统菜单（Tauri 壳，`tavotto:menu`）→ 现有 action 的转发。**这里没有第二套行为**：

@@ -36,7 +36,7 @@ def updater_overlay(public_key: str) -> dict:
     if not key:
         raise ValueError("Updater signing requires TAURI_UPDATER_PUBLIC_KEY")
     return {
-        "bundle": {"createUpdaterArtifacts": True},
+        "bundle": {"createUpdaterArtifacts": "v1Compatible"},
         "plugins": {
             "updater": {
                 "endpoints": [_UPDATER_ENDPOINT],
@@ -90,8 +90,8 @@ def validate_packaging(conf: dict, *, updater_enabled: bool = False) -> None:
     bundle = conf.get("bundle", {})
     updater = conf.get("plugins", {}).get("updater")
     if updater_enabled:
-        if bundle.get("createUpdaterArtifacts") is not True:
-            raise ValueError("A stable release must create signed updater artifacts")
+        if bundle.get("createUpdaterArtifacts") != "v1Compatible":
+            raise ValueError("A stable release must create signed updater archives")
         if (
             not isinstance(updater, dict)
             or updater.get("endpoints") != [_UPDATER_ENDPOINT]

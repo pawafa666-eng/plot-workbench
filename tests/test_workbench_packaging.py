@@ -35,7 +35,7 @@ def test_actual_desktop_config_is_an_independent_fork():
 def test_release_overlay_embeds_the_fork_endpoint_and_public_key():
     overlay = builder.updater_overlay("minisign-public-key")
     assert overlay == {
-        "bundle": {"createUpdaterArtifacts": True},
+        "bundle": {"createUpdaterArtifacts": "v1Compatible"},
         "plugins": {
             "updater": {
                 "endpoints": [

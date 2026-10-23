@@ -38,7 +38,7 @@ Windows 配置保存在 `%APPDATA%\PlotWorkbench`，缓存和日志保存在 `%L
 
 从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载 Windows x64 的 `Setup.exe`，双击安装，完成后从开始菜单启动 **Plot Workbench**。卸载使用 Windows「已安装的应用」。更新包使用 minisign 签名；安装程序目前没有 Windows Authenticode 发布者证书。
 
-检查新版本时，打开「设置 → 关于与隐私 → 检查更新」，按「立即检查」。启动软件和打开设置页都不会自动检查。发现新版本后可确认下载并安装，安装前验证更新签名；安装完成后重启软件。早期 1.0.0 用户需要手动覆盖安装一次带更新器的版本。
+检查新版本时，点击工作台右上角齿轮「设置」，在「关于与隐私 → 检查更新」中按「立即检查」。也可使用原生菜单进入该页。启动软件和打开设置页都不会自动检查。发现新版本后可确认下载并安装，安装前验证更新签名；安装完成后重启软件。早期 1.0.0 用户需要手动覆盖安装一次带更新器的版本。
 
 开发构建运行 `python scripts/workbench_build.py`。完整 Windows 构建需要 Python 打包依赖、pnpm、Rust 与 MSVC/Windows SDK；仓库的 **Plot Workbench Windows** GitHub Actions 使用 Windows runner 构建，验证安装、运行与卸载后才上传安装包。
 

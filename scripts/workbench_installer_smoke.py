@@ -11,6 +11,7 @@ import ctypes
 import importlib.util
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -41,19 +42,40 @@ def alive(pid: int) -> bool:
         kernel.CloseHandle(ctypes.c_void_p(handle))
 
 
-def close_window(pid: int) -> None:
+def native_windows(pid: int) -> list[dict]:
     user = ctypes.windll.user32
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    windows = []
 
     @callback_type
     def visit(window, _):
         owner = ctypes.c_ulong()
         user.GetWindowThreadProcessId(ctypes.c_void_p(window), ctypes.byref(owner))
         if owner.value == pid:
-            user.PostMessageW(ctypes.c_void_p(window), 0x0010, 0, 0)
+            title = ctypes.create_unicode_buffer(512)
+            kind = ctypes.create_unicode_buffer(128)
+            user.GetWindowTextW(ctypes.c_void_p(window), title, len(title))
+            user.GetClassNameW(ctypes.c_void_p(window), kind, len(kind))
+            windows.append(
+                {
+                    "handle": window,
+                    "title": title.value,
+                    "class": kind.value,
+                    "visible": bool(user.IsWindowVisible(ctypes.c_void_p(window))),
+                }
+            )
         return True
 
     user.EnumWindows(visit, 0)
+    return windows
+
+
+def close_window(pid: int) -> int:
+    windows = [window for window in native_windows(pid) if window["visible"]]
+    for window in windows:
+        if not ctypes.windll.user32.PostMessageW(ctypes.c_void_p(window["handle"]), 0x0010, 0, 0):
+            raise RuntimeError("Could not post WM_CLOSE to the installed native window")
+    return len(windows)
 
 
 def shell_listeners(parent_pid: int, sidecar: Path) -> list[tuple[int, int]]:
@@ -103,7 +125,12 @@ def shell_listeners(parent_pid: int, sidecar: Path) -> list[tuple[int, int]]:
 
 
 def shell_smoke(shell: Path, env: dict) -> None:
-    process = subprocess.Popen([str(shell)], env=env, cwd=shell.parent)
+    diagnostics = ROOT / "build/workbench-installer-smoke/shell"
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    output = (diagnostics / "shell.log").open("wb")
+    process = subprocess.Popen(
+        [str(shell)], env=env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
+    )
     side_pid = None
     try:
         deadline = time.monotonic() + 90
@@ -133,7 +160,11 @@ def shell_smoke(shell: Path, env: dict) -> None:
             time.sleep(0.25)
         if not side_pid:
             raise RuntimeError("Desktop shell did not start its authenticated sidecar")
-        close_window(process.pid)
+        deadline = time.monotonic() + 30
+        while not close_window(process.pid):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The installed desktop did not expose a visible native window")
+            time.sleep(0.25)
         process.wait(timeout=30)
         deadline = time.monotonic() + 20
         while alive(side_pid) and time.monotonic() < deadline:
@@ -142,9 +173,21 @@ def shell_smoke(shell: Path, env: dict) -> None:
             raise RuntimeError(f"Orphaned sidecar after desktop close: {side_pid}")
         print("PASS: installed desktop shell -> sidecar -> clean close")
     finally:
+        (diagnostics / "windows.json").write_text(
+            json.dumps(native_windows(process.pid), ensure_ascii=False, indent=2), "utf-8"
+        )
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10)
+        output.close()
+        conf = ROOT / "src-tauri/tauri.conf.json"
+        if conf.is_file():
+            app_id = json.loads(conf.read_text("utf-8"))["identifier"]
+            log = Path(os.environ.get("LOCALAPPDATA", "")) / app_id / "logs/sidecar.log"
+            if log.is_file():
+                text = log.read_text("utf-8", errors="replace")[-128_000:]
+                text = re.sub(r"dnonce=[A-Za-z0-9_-]+", "dnonce=[redacted]", text)
+                (diagnostics / "sidecar.log").write_text(text, "utf-8")
 
 
 def workbench_smoke(sidecar: Path, env: dict, work: Path) -> None:

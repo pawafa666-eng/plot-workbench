@@ -32,13 +32,20 @@ def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
     process.wait = lambda **_: setattr(process, "returncode", 0)
     process.kill = lambda: setattr(process, "returncode", -1)
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **kw: process)
+    monkeypatch.setattr(smoke, "ROOT", tmp_path)
+    monkeypatch.setattr(smoke, "native_windows", lambda _: [])
     monkeypatch.setattr(smoke.tempfile, "gettempdir", lambda: str(tmp_path))
     ticks = iter(range(1000))
     monkeypatch.setattr(smoke.time, "monotonic", lambda: next(ticks))
     monkeypatch.setattr(smoke.time, "sleep", lambda *_: None)
     monkeypatch.setattr(smoke, "alive", lambda _: False)
     closed = []
-    monkeypatch.setattr(smoke, "close_window", lambda pid: closed.append(pid))
+
+    def close(pid):
+        closed.append(pid)
+        return int(len(closed) >= 2)
+
+    monkeypatch.setattr(smoke, "close_window", close)
     listeners = [
         {"pid": 555, "exe": str(tmp_path / "other.exe"), "ports": [12345]},
         {"pid": 456, "exe": str(sidecar), "ports": [54321]},
@@ -72,7 +79,7 @@ def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
     monkeypatch.setattr(smoke.urllib.request, "urlopen", response)
     if protected_status == 401:
         smoke.shell_smoke(shell, {})
-        assert closed == [412]
+        assert closed == [412, 412]
         assert requests == [
             "http://127.0.0.1:54321/",
             "http://127.0.0.1:54321/api/session/ping",

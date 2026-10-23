@@ -33,7 +33,7 @@ pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w "$env:USERPROFILE\.tauri\plot
 
 ## 发布新版本
 
-早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。带更新器的正式安装包从 `1.0.5` 开始发布；早期用户要先从 Releases 手动下载并覆盖安装一次，之后才可在软件内更新。每次发布新版本时，将以下版本保持一致：
+早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。请先从 Releases 手动下载带更新器的稳定安装包并覆盖安装一次，之后即可在软件内更新。每次发布新版本时，将以下版本保持一致：
 
 - `src/tavotto/engine/brand.py` 的 `WORKBENCH_VERSION`
 - `src-tauri/tauri.conf.json` 的 `version`

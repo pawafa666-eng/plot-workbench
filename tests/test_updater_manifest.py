@@ -27,6 +27,60 @@ def _artifact(root: Path, name: str, sig: str | None = "SIG") -> Path:
     return p
 
 
+def test_manifest_uses_the_filename_github_publishes_for_a_spaced_product(tmp_path):
+    # Observed on the actual v1.0.9 Release: GitHub replaces upload-name spaces
+    # with periods. The signature still belongs to the unchanged archive bytes.
+    _artifact(tmp_path, "Plot Workbench_1.0.9_x64-setup.nsis.zip", "SIGNED-ARCHIVE")
+    manifest = mod.build_manifest(
+        tmp_path, "1.0.9", "v1.0.9", "pawafa666-eng", "plot-workbench", ""
+    )
+    windows = manifest["platforms"]["windows-x86_64"]
+    assert windows["url"] == (
+        "https://github.com/pawafa666-eng/plot-workbench/releases/download/v1.0.9/"
+        "Plot.Workbench_1.0.9_x64-setup.nsis.zip"
+    )
+    assert windows["signature"] == "SIGNED-ARCHIVE"
+
+
+def test_cli_rejects_an_update_url_absent_from_actual_uploaded_assets(tmp_path):
+    _artifact(tmp_path / "updater", "Plot Workbench_1.0.9_x64-setup.nsis.zip")
+    metadata = tmp_path / "release.json"
+    metadata.write_text(json.dumps({"tag_name": "v1.0.9", "assets": []}), "utf-8")
+    output = tmp_path / "latest.json"
+    args = [
+        "--artifacts",
+        str(tmp_path / "updater"),
+        "--tag",
+        "v1.0.9",
+        "--out",
+        str(output),
+        "--published-release",
+        str(metadata),
+    ]
+    with pytest.raises(SystemExit, match="uploaded release assets"):
+        mod.main(args)
+    assert not output.exists()
+    archive_url = (
+        f"{mod.brand.REPO_URL}/releases/download/v1.0.9/Plot.Workbench_1.0.9_x64-setup.nsis.zip"
+    )
+    metadata.write_text(
+        json.dumps(
+            {
+                "tag_name": "v1.0.9",
+                "assets": [
+                    {"browser_download_url": archive_url},
+                    {"browser_download_url": archive_url + ".sig"},
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    assert mod.main(args) == 0
+    assert (
+        json.loads(output.read_text("utf-8"))["platforms"]["windows-x86_64"]["url"] == archive_url
+    )
+
+
 def test_two_platforms_land_in_one_manifest(tmp_path):
     """两条 matrix 腿各自上传的产物，拼成同一份清单。"""
     _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz", "MAC-SIG\n")
@@ -41,7 +95,7 @@ def test_two_platforms_land_in_one_manifest(tmp_path):
     assert man["platforms"]["darwin-aarch64"]["signature"] == "MAC-SIG"
     assert man["platforms"]["windows-x86_64"]["url"] == (
         "https://github.com/Tavotto/Tavotto/releases/download/v0.7.0/"
-        "Plot Workbench_0.7.0_x64-setup.nsis.zip"
+        "Plot.Workbench_0.7.0_x64-setup.nsis.zip"
     )
 
 
@@ -79,9 +133,9 @@ def test_each_mac_arch_gets_exactly_its_own_package(tmp_path):
     )
     _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz", "ARM-SIG\n")
     man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
-    assert man["platforms"]["darwin-aarch64"]["url"].endswith("/Plot Workbench.app.tar.gz")
+    assert man["platforms"]["darwin-aarch64"]["url"].endswith("/Plot.Workbench.app.tar.gz")
     assert man["platforms"]["darwin-aarch64"]["signature"] == "ARM-SIG"
-    assert man["platforms"]["darwin-x86_64"]["url"].endswith("/Plot Workbench-Intel.app.tar.gz")
+    assert man["platforms"]["darwin-x86_64"]["url"].endswith("/Plot.Workbench-Intel.app.tar.gz")
     assert man["platforms"]["darwin-x86_64"]["signature"] == "INTEL-SIG"
 
 
@@ -117,7 +171,7 @@ def test_cli_writes_the_file(tmp_path):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["version"] == "1.2.3"
     assert data["platforms"]["darwin-aarch64"]["url"] == (
-        f"{mod.brand.REPO_URL}/releases/download/v1.2.3/Plot Workbench.app.tar.gz"
+        f"{mod.brand.REPO_URL}/releases/download/v1.2.3/Plot.Workbench.app.tar.gz"
     )
 
 
@@ -151,7 +205,9 @@ def test_workbench_release_defaults_to_its_repository_and_accepts_notes_file(tmp
     assert set(data["platforms"]) == {"windows-x86_64"}
     platform = data["platforms"]["windows-x86_64"]
     assert platform["signature"] == "WORKBENCH-SIGNATURE"
-    assert platform["url"] == (f"{mod.brand.REPO_URL}/releases/download/v1.0.1/{archive_name}")
+    assert platform["url"] == (
+        f"{mod.brand.REPO_URL}/releases/download/v1.0.1/Plot.Workbench_1.0.1_x64-setup.nsis.zip"
+    )
 
 
 def test_half_a_manifest_is_rejected_when_both_platforms_are_required(tmp_path):

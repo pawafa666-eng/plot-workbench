@@ -109,11 +109,28 @@ def build_manifest(
             key: {
                 # 签名文件里是 base64 的 minisign 签名，原样塞进去
                 "signature": sig.read_text(encoding="utf-8").strip(),
-                "url": RELEASE_URL.format(owner=owner, repo=repo, tag=tag, name=pkg.name),
+                # GitHub normalizes spaces in uploaded asset names to periods.
+                # The archive bytes/signature stay unchanged; only its public
+                # filename differs from the Tauri-generated local filename.
+                "url": RELEASE_URL.format(
+                    owner=owner, repo=repo, tag=tag, name=pkg.name.replace(" ", ".")
+                ),
             }
             for key, (pkg, sig) in sorted(found.items())
         },
     }
+
+
+def validate_published_assets(manifest: dict, release: dict) -> None:
+    """Compare URLs against GitHub's actual names before exposing the draft."""
+    if release.get("tag_name") != f"v{manifest['version']}":
+        raise SystemExit("The uploaded release assets belong to a different version")
+    urls = {asset.get("browser_download_url") for asset in release.get("assets", [])}
+    for platform, entry in manifest["platforms"].items():
+        if entry["url"] not in urls or entry["url"] + ".sig" not in urls:
+            raise SystemExit(
+                f"{platform} update URL/signature is absent from uploaded release assets"
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--notes-file", type=Path, help="从 UTF-8 文件读取更新说明")
     ap.add_argument("--require", default="", help="必须齐全的平台（逗号分隔），缺一个即失败")
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--published-release", type=Path, help="GitHub draft Release API metadata")
     args = ap.parse_args(argv)
 
     if args.notes_file and args.notes:
@@ -136,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest = build_manifest(
         args.artifacts, version, args.tag, args.owner, args.repo, notes, require
     )
+    if args.published_release:
+        validate_published_assets(manifest, json.loads(args.published_release.read_text("utf-8")))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"✓ {args.out}（{', '.join(manifest['platforms'])}）")

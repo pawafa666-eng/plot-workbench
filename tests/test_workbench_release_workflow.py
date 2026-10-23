@@ -71,3 +71,6 @@ def test_only_the_publish_job_gets_release_write_permission_after_validation():
     assert "windows-x86_64" in manifest
     release = _step(publish, "Publish stable Release")
     assert "gh release create" in release
+    assert "--draft" in release
+    assert release.index("--draft") < release.index("--published-release")
+    assert release.index("--published-release") < release.index("--draft=false")

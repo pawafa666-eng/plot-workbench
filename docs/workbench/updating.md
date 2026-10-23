@@ -21,12 +21,12 @@ pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w "$env:USERPROFILE\.tauri\plot
 |---|---|---|
 | Repository secret | `TAURI_SIGNING_PRIVATE_KEY` | `plot-workbench.key` 的全部内容 |
 | Repository secret | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 生成密钥时设置的口令；若未设置口令，可不创建此项 |
-| Repository variable | `TAURI_UPDATER_PUBLIC_KEY` | `.pub` 文件完整内容的 Base64 编码 |
+| Repository variable | `TAURI_UPDATER_PUBLIC_KEY` | Tauri 生成的 `.pub` 文件原始内容（已经是 Base64，不要再次编码） |
 
 复制 Tauri 配置需要的公钥值到剪贴板，再粘贴为 Repository variable：
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.tauri\plot-workbench.key.pub")) | Set-Clipboard
+(Get-Content -Raw "$env:USERPROFILE\.tauri\plot-workbench.key.pub").Trim() | Set-Clipboard
 ```
 
 在 GitHub 仓库 Settings → Secrets and variables → Actions → Variables 中新建 `TAURI_UPDATER_PUBLIC_KEY`，把剪贴板内容粘贴到 Value。普通分支构建中的 updater 配置保持空端点、空公钥且不生成更新包；稳定版构建才注入更新端点和公钥。工作流会用签名和嵌入的公钥核对 key id；不匹配时不会发布。

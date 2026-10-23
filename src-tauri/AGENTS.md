@@ -24,8 +24,8 @@
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
 - **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/` 里**该拿它的
-  那个窗口**加 `allow-<命令名连字符化>`（主窗口 `main.json`，远程实例窗口
-  `remote-*.json`）、`main.rs` 的 `generate_handler`。漏掉前两处
+  那个窗口**加 `allow-<命令名连字符化>`（本 fork 只有主窗口 `main.json`）、
+  `main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
   失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
   （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
@@ -43,12 +43,10 @@
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
   视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
   `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。
-- **远程实例窗口**（ADR 0105）：label `remote`，加载 `ssh -L` 转发过来的服务器引擎。
-  `incognito(true)`（cookie 不按端口隔离，共用存储会顶掉本机会话）+ 注入
-  `REMOTE_WINDOW_MARKER`（前端 `isDesktop()` 据它为假，本机文件类能力走浏览器回退）+
-  不装 native_drop。权限是闭集（`capabilities/remote-*.json`：只听事件不发、关窗询问、
-  壳自带页面的 `connect_remote`），**不许往里加本机文件类权限**；关窗闸按窗口各一道，
-  菜单发给聚焦窗口。看护 `tests/test_desktop_remote.py`。
+- **本 fork 仅保留本机主窗口**（2026-10-23）：用户要求移除「连接远程实例」。
+  原生菜单、`connect_remote` 命令、远程 capability 与连接页一并删除；
+  `tests/test_workbench_desktop.py` 看护实际命令闭集、窗口建造点与权限作用域。
+  ADR 0105 保留为上游历史；共享引擎的浏览器兼容契约与认证边界不改。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见
@@ -62,7 +60,7 @@
   **只有设置页里的“立即检查”按钮可以查询 Releases**。应用启动和打开设置页不检查，
   原生菜单只导航到设置。检查结果留在设置页，用户再按“下载并安装”后才下载。
 - 桌面 Python updater 仍停用。Tauri 插件权限 `updater:default` 只授给 `main-window`，
-  绝不加到 `remote-*.json`。
+  不向其他窗口授予该权限。
 - 普通分支构建不含更新 endpoint，也不生成 updater archive。只有稳定版本 tag 构建会
   通过 `scripts/workbench_build.py` 注入来自 Actions Variable `TAURI_UPDATER_PUBLIC_KEY`
   的公钥与 `engine.brand.REPO_URL` endpoint，并读取 Secrets 中的
@@ -107,5 +105,8 @@
 前端起来后重建——已知限制，见 docs/i18n.md。
 **壳内文案不手写产品名**：`build.rs` 从 `brand.ts` / `engine/brand.py` 编译期注入
 `TAVOTTO_PRODUCT_NAME` / `TAVOTTO_DIST_NAME`，`ShellText` 里写 `concat!(env!(…), …)`，
-`connect.html` 由壳经 `?product=` / `?dist=` 带名字（`tests/test_desktop_i18n.py` 看护；
-splash / error 页与窗口标题是尚未收口的旧写法）。
+`tests/test_desktop_i18n.py` 看护品牌注入（splash / error 页与窗口标题是尚未收口的旧写法）。
+
+**Windows 快捷方式图标**：`assets/workbench/icon.ico` 同时用于 EXE 资源与安装目录
+`workbench.ico`；NSIS 新建快捷方式时显式指定它，更新时只修改仍指向本次安装的
+已有快捷方式的图标，保留用户参数与窗口状态，不重建用户已删除的快捷方式。

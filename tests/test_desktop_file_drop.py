@@ -87,15 +87,13 @@ def test_the_tauri_drag_drop_handler_stays_disabled():
 
     判据的主语是**真正建窗口的那几条建造链**，不是 main.rs 里某个子串（Codex #665 P1：
     写进注释、字符串、`if false` 或一个没人调的函数里，子串照样在）。所以：剥掉注释与
-    字面量后，`WebviewWindowBuilder::new(` 全壳恰好两处——主窗口（`fn main`）与远程实例
-    窗口（`fn open_remote_window`，ADR 0105）；每条链都在第 0 层调了
-    `disable_drag_drop_handler()`、且在 `.build()` 之前；它们所在的每一层块都不是条件 /
-    循环 / `#[cfg]` 块。远程窗口不装 native_drop（拖进来的是本机路径，远程引擎用不了），
-    但页面里的 HTML5 拖放（素材拖进画布）同样要还给页面。"""
+    字面量后，`WebviewWindowBuilder::new(` 全壳恰好一处——主窗口（`fn main`）；
+    建造链在第 0 层调了 `disable_drag_drop_handler()`、且在 `.build()` 之前；
+    它所在的每一层块都不是条件 / 循环 / `#[cfg]` 块。"""
     code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
     sites = window_builders(code)
-    assert set(sites) == {"MAIN_WINDOW", "REMOTE_WINDOW"}, sorted(sites)
-    for label, outer in (("MAIN_WINDOW", "main"), ("REMOTE_WINDOW", "open_remote_window")):
+    assert set(sites) == {"MAIN_WINDOW"}, sorted(sites)
+    for label, outer in (("MAIN_WINDOW", "main"),):
         methods = chain_methods(code, sites[label])
         assert "disable_drag_drop_handler" in methods, (
             f"{label} 的建造链没关 Tauri 拖放处理器：{methods}"

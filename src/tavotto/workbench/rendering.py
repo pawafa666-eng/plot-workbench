@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -13,7 +14,7 @@ import time
 import uuid
 from pathlib import Path
 
-from tavotto.engine import atomicio, config, patchspec, pool, runtime
+from tavotto.engine import atomicio, config, patchspec, pool, runtime, workdir
 
 from . import data as data_module
 from .store import WorkbenchError, inside, read_json
@@ -29,35 +30,39 @@ def fingerprint(payload):
     ).hexdigest()
 
 
-def _data_bootstrap(helper="data_helper.py", data="data.json"):
-    return f"""
-def _pwb_load_data():
-    import importlib.util as _iu
-    import json as _json
-    import sys as _sys
-    from pathlib import Path as _Path
-    _root = _Path(__file__).resolve().parent
-    _spec = _iu.spec_from_file_location("_pwb_snapshot", _root / {helper!r})
-    _module = _iu.module_from_spec(_spec)
-    _sys.modules[_spec.name] = _module
-    _spec.loader.exec_module(_module)
-    return _module.dataframe_from_snapshot(_json.loads((_root / {data!r}).read_text("utf-8")))
-
-def main():
-    from pathlib import Path as _Path
-    _figure = build_figure(_pwb_load_data())
-    _figure.savefig(_Path(__file__).resolve().parent / "figure.pdf", bbox_inches="tight", pad_inches=0)
-"""
-
-
-def executable_code(base_code, patches, *, replay=True):
-    """Readable original function plus one generated, versioned execution block."""
-    footer = _data_bootstrap()
-    if replay:
-        footer += f"""
-PWB_OVERRIDES = {patches!r}
+def executable_code(base_code, patches, *, replay=True, output_overrides=None):
+    """Original source and one versioned entry shared by standalone and replay."""
+    histories = output_overrides or {"figure": patches}
+    footer = f"""
+PWB_SOURCE = {base_code!r}
+PWB_OVERRIDES = {histories!r}
 PWB_ENGINE_VERSION = "0.18.0"
 
+def main(_capture=True):
+    import importlib.util as _iu
+    import json as _json
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parent
+    _spec = _iu.spec_from_file_location("_pwb_execution", _root / 'execution.py')
+    _helper = _iu.module_from_spec(_spec)
+    _spec.loader.exec_module(_helper)
+    _context = _json.loads((_root / 'context.json').read_text("utf-8"))
+    _context["data_helper"] = str(_root / 'data_helper.py')
+    _context["data"] = _json.loads((_root / 'data.json').read_text("utf-8"))
+    _context["working_directory"] = str(_root / 'inputs')
+    _context["input_directory"] = str(_root / 'inputs')
+    _figures, _snapshot = _helper.execute(PWB_SOURCE, _context["data"], _context.get("schema", {{}}),
+        working_directory=_context["working_directory"], source_path=_context.get("original_path"),
+        data_helper=_context["data_helper"], input_directory=_context["input_directory"],
+        input_files=_context.get("input_files", []), original_directory=_context.get("original_directory"))
+    for _index, _fig in enumerate(_figures):
+        _stem = "figure" if _index == 0 else f"figure_{{_index + 1}}"
+        if _capture:
+            _fig.savefig(_root / (_stem + ".pdf"), bbox_inches="tight", pad_inches=0)
+    return _figures
+"""
+    if replay:
+        footer += """
 def _pwb_replay():
     import json as _json
     from pathlib import Path as _Path
@@ -65,13 +70,15 @@ def _pwb_replay():
     _here = _Path(__file__).resolve()
     _worker = _pool.one_shot(_here.name, str(_here.parent), "main")
     try:
-        _response = _worker.override("figure", PWB_OVERRIDES, inline_svg=True)
-        if _response.get("warnings"):
-            raise RuntimeError(_json.dumps(_response["warnings"], ensure_ascii=False))
-        for _format in ("png", "svg", "pdf"):
-            _result = _worker.export("figure", PWB_OVERRIDES, str(_here.with_suffix("." + _format)), _format, 600)
-            if _result.get("warnings"):
-                raise RuntimeError(str(_result["warnings"]))
+        for _index, (_stem, _patches) in enumerate(PWB_OVERRIDES.items()):
+            _response = _worker.override(_stem, _patches, inline_svg=True)
+            if _response.get("warnings"):
+                raise RuntimeError(_json.dumps(_response["warnings"], ensure_ascii=False))
+            for _format in ("png", "svg", "pdf"):
+                _target = _here.with_suffix("." + _format) if _index == 0 else _here.with_name(_here.stem + "_" + _stem + "." + _format)
+                _result = _worker.export(_stem, _patches, str(_target), _format, 600)
+                if _result.get("warnings"):
+                    raise RuntimeError(str(_result["warnings"]))
     finally:
         _pool.discard(_worker)
 
@@ -82,13 +89,14 @@ if __name__ == "__main__":
         footer += """
 if __name__ == "__main__":
     from pathlib import Path as _Path
-    _fig = build_figure(_pwb_load_data())
-    for _fmt in ("png", "svg", "pdf"):
-        _fig.savefig(_Path(__file__).with_suffix("." + _fmt), dpi=600, bbox_inches="tight", pad_inches=0)
+    _figures = main(_capture=False)
+    for _index, _fig in enumerate(_figures):
+        for _fmt in ("png", "svg", "pdf"):
+            _path = _Path(__file__).with_suffix("." + _fmt) if _index == 0 else _Path(__file__).with_name(_Path(__file__).stem + "_figure_" + str(_index + 1) + "." + _fmt)
+            _fig.savefig(_path, dpi=600, bbox_inches="tight", pad_inches=0)
 """
     return (
-        base_code.rstrip()
-        + "\n\n# >>> Plot Workbench generated execution block >>>\n"
+        "# >>> Plot Workbench generated execution block >>>\n"
         + footer
         + "# <<< Plot Workbench generated execution block <<<\n"
     )
@@ -140,15 +148,25 @@ class RenderService:
                 )
         payload = copy.deepcopy({**payload, "schema": schema})
         job_id = uuid.uuid4().hex
-        directory = inside(self.root, job_id)
-        directory.mkdir()
+        working_directory = None
+        if plot_id:
+            plot = self.store.get_plot(plot_id)
+            working_directory = str(self.store.working_directory(plot["project_id"]))
+            directory = inside(self.store.project_dir(plot["project_id"]), f"cache/runs/{job_id}")
+        else:
+            directory = inside(self.root, job_id)
+        directory.mkdir(parents=True)
+        shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
+        shutil.copy2(_MODULE_ROOT / "execution.py", directory / "execution.py")
         atomicio.write_bytes(directory / "base.py", payload["code"].encode("utf-8"))
         atomicio.write_json(
             directory / "input.json",
             {
                 "data": payload.get("data"),
                 "schema": schema,
-                "data_helper": str(_MODULE_ROOT / "data.py"),
+                "data_helper": str(directory / "data_helper.py"),
+                "working_directory": working_directory or str(directory),
+                "original_path": payload.get("original_path"),
             },
         )
         job = {
@@ -159,6 +177,7 @@ class RenderService:
             "requested_payload": copy.deepcopy(payload),
             "fingerprint": fingerprint(payload),
             "directory": str(directory),
+            "working_directory": working_directory or str(directory),
             "cancel": threading.Event(),
             "process": None,
             "created": time.monotonic(),
@@ -178,7 +197,7 @@ class RenderService:
             if job["cancel"].is_set():
                 job["status"] = "cancelled"
                 return
-            python, source = pool.resolve_worker_python(str(directory), script="base.py")
+            python, source = pool.resolve_worker_python(job["working_directory"], script="base.py")
             bundled = source == pool.SOURCE_BUNDLED
             env = runtime.probe_env(python, bundled=bundled)
             if env is None:
@@ -238,6 +257,8 @@ class RenderService:
             atomicio.write_json(directory / "environment.json", environment)
             job["payload"]["data"] = result["data"]
             job["environment"] = environment
+            job["outputs"] = result.get("outputs", [{"stem": "figure", "title": "图 1"}])
+            job["input_files"] = result.get("input_files", [])
             job["fingerprint"] = fingerprint(job["payload"])
             job["result"] = {
                 "run_id": job["id"],
@@ -245,6 +266,13 @@ class RenderService:
                 "data": result["data"],
                 "schema": result["schema"],
                 "environment": environment,
+                "outputs": [
+                    {
+                        **item,
+                        "preview_url": f"/api/workbench/jobs/{job['id']}/artifact/{item['stem']}.png",
+                    }
+                    for item in job["outputs"]
+                ],
             }
             job["status"] = "success"
         except Exception as error:
@@ -306,6 +334,10 @@ class RenderService:
                 }
             if payload.get("original_path"):
                 source["original_path"] = payload["original_path"]
+                root = Path(job["working_directory"])
+                original = Path(payload["original_path"]).resolve()
+                if original.is_relative_to(root):
+                    source["original_relative_path"] = original.relative_to(root).as_posix()
             return self.store.commit_plot(
                 plot_id,
                 {
@@ -315,11 +347,13 @@ class RenderService:
                     "source": source,
                     "overrides": [],
                     "environment": job.get("environment", {}),
+                    "outputs": job["outputs"],
+                    "input_files": job.get("input_files", []),
                 },
                 job["directory"],
             )
 
-    def export_path(self, plot_id, fmt):
+    def export_path(self, plot_id, fmt, stem="figure"):
         if fmt not in ("png", "svg", "pdf"):
             raise WorkbenchError("不支持的图片格式")
         plot = self.store.get_plot(plot_id)
@@ -332,7 +366,17 @@ class RenderService:
                 raise WorkbenchError("当前草稿尚未成功运行，不能导出", "unsaved_draft", 409)
             if any(job["payload"].get(key) != plot.get(key) for key in ("code", "data", "schema")):
                 raise WorkbenchError("当前成功结果尚未保存，不能导出旧版本", "unsaved_draft", 409)
-        return inside(plot["_artifact_dir"], f"figure.{fmt}")
+        self._output(plot, stem)
+        return inside(plot["_artifact_dir"], f"{stem}.{fmt}")
+
+    @staticmethod
+    def _output(plot, stem):
+        outputs = plot.get("outputs") or [{"stem": "figure", "title": "图 1"}]
+        if not re.fullmatch(r"figure(?:_[2-9][0-9]*|_1[0-9]+)?", str(stem)) or stem not in {
+            item["stem"] for item in outputs
+        }:
+            raise WorkbenchError("图形不存在", "output_not_found", 404)
+        return next(item for item in outputs if item["stem"] == stem)
 
     def _adapter(self, plot, directory):
         directory = Path(directory)
@@ -340,44 +384,79 @@ class RenderService:
         code = plot.get("base_code", plot["code"])
         atomicio.write_bytes(directory / "base.py", code.encode("utf-8"))
         atomicio.write_json(directory / "data.json", plot["data"])
-        shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
+        for filename, fallback in (("data_helper.py", "data.py"), ("execution.py", "execution.py")):
+            frozen = Path(plot["_artifact_dir"]) / filename
+            shutil.copy2(
+                frozen if frozen.is_file() else _MODULE_ROOT / fallback, directory / filename
+            )
+        working_directory = self.store.working_directory(plot["project_id"])
+        source_inputs = Path(plot["_artifact_dir"]) / "inputs"
+        if source_inputs.is_dir():
+            shutil.copytree(source_inputs, directory / "inputs", dirs_exist_ok=True)
+        else:
+            (directory / "inputs").mkdir(exist_ok=True)
+        atomicio.write_json(
+            directory / "input.json",
+            {
+                "data": plot.get("data"),
+                "schema": plot.get("schema") or {},
+                "working_directory": str(working_directory),
+                "original_directory": str(working_directory),
+                "original_path": plot.get("source", {}).get("original_path"),
+                "data_helper": str(directory / "data_helper.py"),
+                "input_directory": str(directory / "inputs"),
+                "input_files": plot.get("input_files", []),
+            },
+        )
         adapter = """import importlib.util
-import sys
+import json
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent
-_SPEC = importlib.util.spec_from_file_location("pwb_base_figure", _ROOT / "base.py")
-_BASE = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = _BASE
-_SPEC.loader.exec_module(_BASE)
-build_figure = _BASE.build_figure
-""" + _data_bootstrap()
+_SPEC = importlib.util.spec_from_file_location("_pwb_execution", _ROOT / "execution.py")
+_HELPER = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_HELPER)
+def main():
+    return _HELPER.capture(json.loads((_ROOT / "input.json").read_text("utf-8")), directory=_ROOT)
+"""
         atomicio.write_bytes(directory / "adapter.py", adapter.encode("utf-8"))
         return directory
 
-    def open_session(self, plot_id):
+    def _session_worker(self, session):
+        root = self.store.working_directory(session["plot"]["project_id"])
+        # Selecting the folder is the user's explicit project-cwd decision.
+        workdir.set_mode(root, workdir.MODE_PROJECT_ROOT)
+        script = (Path(session["directory"]) / "adapter.py").relative_to(root).as_posix()
+        return pool.one_shot(script, str(root), "main")
+
+    def open_session(self, plot_id, stem="figure"):
         plot = self.store.get_plot(plot_id)
         if not plot.get("revision"):
             raise WorkbenchError("请先运行并保存当前子图", "unsaved_plot", 409)
+        self.export_path(plot_id, "png", stem)
+        self._output(plot, stem)
         sid = uuid.uuid4().hex
-        directory = self._adapter(plot, inside(self.root, f"session-{sid}"))
-        worker = pool.one_shot("adapter.py", str(directory), "main")
+        directory = self._adapter(
+            plot, inside(self.store.project_dir(plot["project_id"]), f"cache/sessions/{sid}")
+        )
+        histories = plot.get("output_overrides") or {"figure": plot.get("overrides", [])}
         session = {
             "id": sid,
             "plot_id": plot_id,
             "revision": plot["revision"],
             "plot": copy.deepcopy(plot),
-            "worker": worker,
             "directory": str(directory),
-            "patches": plot.get("overrides", []),
+            "stem": stem,
+            "patches": histories.get(stem, []),
             "lock": threading.RLock(),
             "closed": False,
         }
+        session["worker"] = self._session_worker(session)
         self.sessions[sid] = session
         try:
             response = self._session_render(session, session["patches"])
             return {
                 "session_id": sid,
-                "stem": "figure",
+                "stem": stem,
                 "script": "adapter.py",
                 "project": str(directory),
                 "manifest": response["manifest"],
@@ -402,7 +481,7 @@ build_figure = _BASE.build_figure
             if hasattr(patchspec, "canonical_patches")
             else patches
         )
-        response = session["worker"].override("figure", normalized, inline_svg=True)
+        response = session["worker"].override(session["stem"], normalized, inline_svg=True)
         if response.get("warnings"):
             raise WorkbenchError(
                 "编辑无法完整应用：" + str(response["warnings"]), "override_warnings", 409
@@ -420,7 +499,7 @@ build_figure = _BASE.build_figure
         session = self._session(sid)
         with session["lock"]:
             path = session["worker"].preview_png(
-                "figure", patches, max(200, min(int(bucket), 6400)), uuid.uuid4().hex
+                session["stem"], patches, max(200, min(int(bucket), 6400)), uuid.uuid4().hex
             )
             destination = Path(session["directory"]) / "preview.png"
             shutil.copy2(path, destination)
@@ -435,18 +514,19 @@ build_figure = _BASE.build_figure
                 )
             hot = self._session_render(session, patches)
             directory = Path(session["directory"])
-            staged = directory / f"verified-{uuid.uuid4().hex}"
+            staged = directory / f"v-{uuid.uuid4().hex[:8]}"
             staged.mkdir()
-            clean = pool.one_shot("adapter.py", str(directory), "main")
+            clean = self._session_worker(session)
+            stem = session["stem"]
             try:
-                replay = clean.override("figure", session["patches"], inline_svg=True)
+                replay = clean.override(stem, session["patches"], inline_svg=True)
                 if replay.get("warnings"):
                     raise WorkbenchError("重新绘图未能完整应用编辑", "replay_failed", 409)
                 # The same renderer draws both snapshots at the same resolution.
                 hot_png = session["worker"].preview_png(
-                    "figure", session["patches"], 1600, "verify-hot"
+                    stem, session["patches"], 1600, "verify-hot"
                 )
-                cold_png = clean.preview_png("figure", session["patches"], 1600, "verify-cold")
+                cold_png = clean.preview_png(stem, session["patches"], 1600, "verify-cold")
                 from tavotto import pdfbackend
 
                 pixels = pdfbackend.compare_png(Path(hot_png), Path(cold_png))
@@ -464,19 +544,39 @@ build_figure = _BASE.build_figure
                     raise WorkbenchError(
                         "重放后的图片与当前编辑不一致，未保存", "replay_divergence", 409
                     )
+                from .store import copy_artifacts
+
+                copy_artifacts(
+                    session["plot"]["_artifact_dir"], staged, session["plot"].get("outputs", [])
+                )
                 for fmt in ("png", "svg", "pdf"):
                     result = clean.export(
-                        "figure", session["patches"], str(staged / f"figure.{fmt}"), fmt, 600
+                        stem, session["patches"], str(staged / f"{stem}.{fmt}"), fmt, 600
                     )
                     if result.get("warnings"):
                         raise WorkbenchError("导出时无法完整应用编辑", "replay_failed", 409)
                 atomicio.write_json(staged / "manifest.json", replay["manifest"])
-                shutil.copy2(_MODULE_ROOT / "data.py", staged / "data_helper.py")
+                shutil.copy2(directory / "data_helper.py", staged / "data_helper.py")
+                histories = {
+                    item["stem"]: []
+                    for item in session["plot"].get("outputs", [{"stem": "figure"}])
+                }
+                histories.update(
+                    session["plot"].get("output_overrides")
+                    or {"figure": session["plot"].get("overrides", [])}
+                )
+                histories[stem] = session["patches"]
                 replay_code = executable_code(
-                    session["plot"].get("base_code", session["plot"]["code"]), session["patches"]
+                    session["plot"].get("base_code", session["plot"]["code"]),
+                    session["patches"],
+                    output_overrides=histories,
                 )
                 plot = self.store.commit_tavotto(
-                    session["plot_id"], session["patches"], replay_code, staged
+                    session["plot_id"],
+                    histories.get("figure", []),
+                    replay_code,
+                    staged,
+                    output_overrides=histories,
                 )
             finally:
                 pool.discard(clean)
@@ -499,6 +599,7 @@ build_figure = _BASE.build_figure
         plot = self.store.get_plot(plot_id)
         if not plot.get("revision"):
             raise WorkbenchError("请先保存成功运行的子图", "unsaved_plot", 409)
+        self.export_path(plot_id, "png")
         if replace:
             original = plot.get("source", {}).get("original_path")
             if not original:
@@ -525,14 +626,37 @@ build_figure = _BASE.build_figure
         assets = target.parent / f"{target.stem}_assets_{uuid.uuid4().hex[:8]}"
         assets.mkdir()
         atomicio.write_json(assets / "data.json", plot["data"])
-        shutil.copy2(_MODULE_ROOT / "data.py", assets / "data_helper.py")
-        locked = plot["state"] == "TAVOTTO_ONLY"
-        code = executable_code(
-            plot.get("base_code", plot["code"]), plot.get("overrides", []), replay=locked
+        for filename, fallback in (("data_helper.py", "data.py"), ("execution.py", "execution.py")):
+            frozen = Path(plot["_artifact_dir"]) / filename
+            shutil.copy2(frozen if frozen.is_file() else _MODULE_ROOT / fallback, assets / filename)
+        inputs = Path(plot["_artifact_dir"]) / "inputs"
+        if inputs.is_dir():
+            shutil.copytree(inputs, assets / "inputs")
+        else:
+            (assets / "inputs").mkdir()
+        atomicio.write_json(
+            assets / "context.json",
+            {
+                "schema": plot.get("schema") or {},
+                "original_path": plot.get("source", {}).get("original_path"),
+                "original_directory": str(self.store.working_directory(plot["project_id"])),
+                "input_files": plot.get("input_files", []),
+            },
         )
-        code = code.replace(
-            "_root / 'data_helper.py'", f"_root / {f'{assets.name}/data_helper.py'!r}"
-        ).replace("_root / 'data.json'", f"_root / {f'{assets.name}/data.json'!r}")
+        atomicio.write_bytes(
+            assets / "original.py", plot.get("base_code", plot["code"]).encode("utf-8")
+        )
+        locked = plot["state"] == "TAVOTTO_ONLY"
+        histories = {item["stem"]: [] for item in plot.get("outputs", [{"stem": "figure"}])}
+        histories.update(plot.get("output_overrides") or {"figure": plot.get("overrides", [])})
+        code = executable_code(
+            plot.get("base_code", plot["code"]),
+            plot.get("overrides", []),
+            replay=locked,
+            output_overrides=histories,
+        )
+        for filename in ("data_helper.py", "data.json", "execution.py", "context.json", "inputs"):
+            code = code.replace(f"_root / {filename!r}", f"_root / {f'{assets.name}/{filename}'!r}")
         environment = plot.get("environment") or {}
         packages = environment.get("packages") or {}
         requirements = "".join(

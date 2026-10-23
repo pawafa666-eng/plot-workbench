@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Plot Workbench",
   "mainBinaryName": "PlotWorkbench",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "identifier": "io.github.pawafa666-eng.plotworkbench",
   "build": {
     "frontendDist": "shell"
@@ -32,7 +32,8 @@
       "../dist/Tavotto": "sidecar/Tavotto",
       "../LICENSE": "LICENSE",
       "../docs/workbench/ATTRIBUTION.txt": "ATTRIBUTION.txt",
-      "../docs/workbench/usage.md": "usage.md"
+      "../docs/workbench/usage.md": "usage.md",
+      "../assets/workbench/icon.ico": "workbench.ico"
     },
     "macOS": {
       "minimumSystemVersion": "14.0"

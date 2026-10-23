@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import tempfile
 import threading
 import time
@@ -170,7 +171,12 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.post("/projects")
     def create_project():
         body = _body()
-        return jsonify(_public(manager.store.create_project(_need(body, "name"))))
+        path = _need(body, "path")
+        if not isinstance(path, str) or not path.strip():
+            raise WorkbenchError("请选择项目文件夹")
+        return jsonify(
+            _public(manager.store.create_project(body.get("name") or Path(path).name, path=path))
+        )
 
     @bp.post("/projects/open")
     def open_project():
@@ -304,6 +310,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             **body,
             "data": job["payload"]["data"],
             "schema": job["payload"]["schema"],
+            "outputs": job.get("outputs", []),
             "project_id": body.get("project_id") if body.get("scope") == "project" else None,
             "category_id": body.get("category_id") or "uncategorized",
         }
@@ -330,6 +337,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
                 **body,
                 "data": job["payload"]["data"],
                 "schema": job["payload"]["schema"],
+                "outputs": job.get("outputs", []),
                 "category_id": body.get("category_id")
                 or current.get("category_id")
                 or "uncategorized",
@@ -436,7 +444,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.post("/plots/<plot_id>/tavotto/open")
     def open_tavotto(plot_id):
-        return jsonify(manager.service.open_session(plot_id))
+        return jsonify(manager.service.open_session(plot_id, _body().get("stem", "figure")))
 
     @bp.post("/sessions/<session_id>/render")
     def render_session(session_id):
@@ -476,13 +484,27 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.get("/plots/<plot_id>/export")
     def export_plot(plot_id):
         fmt = request.args.get("format", "").lower()
-        path = manager.service.export_path(plot_id, fmt)
+        stem = request.args.get("stem", "figure")
+        path = manager.service.export_path(plot_id, fmt, stem)
         return send_file(
             path,
             mimetype={"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}[fmt],
             as_attachment=True,
-            download_name=f"{manager.store.get_plot(plot_id)['name']}.{fmt}",
+            download_name=f"{manager.store.get_plot(plot_id)['name']}{'_' + stem if stem != 'figure' else ''}.{fmt}",
         )
+
+    @bp.post("/plots/<plot_id>/export-image")
+    def save_image_file(plot_id):
+        body = _body()
+        fmt, stem = body.get("format", "png"), body.get("stem", "figure")
+        source = manager.service.export_path(plot_id, fmt, stem)
+        plot = manager.store.get_plot(plot_id)
+        directory = inside(
+            manager.store.project_dir(plot["project_id"]), f"exports/{plot_id}/{plot['revision']}"
+        )
+        destination = inside(directory, f"{stem}.{fmt}")
+        atomicio.write_bytes(destination, source.read_bytes())
+        return jsonify({"path": str(destination)})
 
     @bp.post("/plots/<plot_id>/export-code")
     def export_code(plot_id):
@@ -507,6 +529,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.get("/plots/<plot_id>/code-package")
     def download_code_package(plot_id):
+        manager.service.export_path(plot_id, "png")
         plot = manager.store.get_plot(plot_id)
         if not plot.get("revision"):
             raise WorkbenchError("请先保存成功运行的子图", "unsaved_plot", 409)
@@ -531,7 +554,9 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.get("/artifact/<kind>/<entity_id>/<int:revision>/<filename>")
     def artifact(kind, entity_id, revision, filename):
-        if filename not in ARTIFACTS or filename.endswith(".py"):
+        if filename not in ARTIFACTS and not re.fullmatch(
+            r"figure_[1-9][0-9]*\.(png|svg|pdf)", filename
+        ):
             raise WorkbenchError("不允许访问该产物", "artifact_forbidden", 403)
         if kind == "plot":
             root = manager.store.plot_dir(entity_id)
@@ -550,17 +575,19 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
         if not path.is_file():
             raise WorkbenchError("产物不存在", "artifact_not_found", 404)
         mimetype = {
-            "figure.png": "image/png",
-            "figure.svg": "image/svg+xml",
-            "figure.pdf": "application/pdf",
-            "manifest.json": "application/json",
-        }[filename]
+            "png": "image/png",
+            "svg": "image/svg+xml",
+            "pdf": "application/pdf",
+            "json": "application/json",
+        }[Path(filename).suffix[1:]]
         return send_file(path, mimetype=mimetype, max_age=0)
 
-    @bp.get("/jobs/<job_id>/artifact/figure.png")
-    def job_artifact(job_id):
+    @bp.get("/jobs/<job_id>/artifact/<filename>")
+    def job_artifact(job_id, filename):
+        if not re.fullmatch(r"figure(?:_[1-9][0-9]*)?\.png", filename):
+            raise WorkbenchError("不允许访问该产物", "artifact_forbidden", 403)
         job = manager.service.successful_run(job_id)
-        path = inside(job["directory"], "figure.png")
+        path = inside(job["directory"], filename)
         if not path.is_file():
             raise WorkbenchError("预览不存在", "artifact_not_found", 404)
         return send_file(path, mimetype="image/png", max_age=0)

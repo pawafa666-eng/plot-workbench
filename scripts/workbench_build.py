@@ -105,6 +105,8 @@ def validate_packaging(conf: dict, *, updater_enabled: bool = False) -> None:
     }:
         raise ValueError("Ordinary Plot Workbench builds must not create updater artifacts")
     resources = bundle.get("resources", {})
+    if resources.get("../assets/workbench/icon.ico") != "workbench.ico":
+        raise ValueError("The installer must include the explicit Windows shortcut icon")
     if (
         resources.get("../LICENSE") != "LICENSE"
         or resources.get("../docs/workbench/ATTRIBUTION.txt") != "ATTRIBUTION.txt"

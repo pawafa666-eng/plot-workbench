@@ -2,7 +2,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorkbenchApp } from './WorkbenchApp'
-import { checkDesktopUpdate, onDesktopMenu, type MenuAction } from '@/lib/desktop'
+import { checkDesktopUpdate, onDesktopMenu, pickDirectory, type MenuAction } from '@/lib/desktop'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 
@@ -11,6 +11,7 @@ vi.mock('@/lib/desktop', async (original) => ({
   isDesktop: () => true,
   onDesktopMenu: vi.fn(async () => () => {}),
   checkDesktopUpdate: vi.fn(async () => null),
+  pickDirectory: vi.fn(async () => null),
 }))
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -28,6 +29,8 @@ beforeEach(async () => {
       ? { root: '/workbench-test', version: '1.0.5', projects: [] }
       : url.includes('/workbench/templates')
         ? { templates: [], categories: [] }
+        : url.includes('/workbench/projects')
+          ? { id: 'project-new', name: '已有数据', path: 'D:\\研究\\已有数据', plots: [] }
         : url.includes('/update/check')
           ? { desktop: true, current: '1.0.5', auto_check: false, repo_url: 'https://github.com/pawafa666-eng/plot-workbench', releases_url: 'https://github.com/pawafa666-eng/plot-workbench/releases' }
           : { checks: [] }
@@ -66,4 +69,38 @@ it('routes the native update menu to the same settings without checking', async 
   await act(async () => handler('menu-check-updates' satisfies MenuAction))
   expect(checkButton()).toBeTruthy()
   expect(checkDesktopUpdate).not.toHaveBeenCalled()
+})
+
+it('creates a project in an existing folder with an optional name', async () => {
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-project-create]')!.click())
+  const path = document.querySelector<HTMLInputElement>('[data-wb-project-path]')
+  expect(path).toBeTruthy()
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(path, 'D:\\研究\\已有数据')
+    path!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  const confirm = document.querySelector<HTMLButtonElement>('[data-wb-project-confirm]')
+  expect(confirm?.disabled).toBe(false)
+  await act(async () => confirm!.click())
+  const request = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/workbench/projects' && init?.method === 'POST')
+  expect(request).toBeTruthy()
+  expect(JSON.parse(String(request![1]!.body))).toEqual({ path: 'D:\\研究\\已有数据', name: '' })
+})
+
+it('provides the online template repository from the template library', async () => {
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-nav-templates]')!.click())
+  const link = document.querySelector<HTMLAnchorElement>('[data-wb-online-templates]')
+  expect(link?.href).toBe('https://github.com/pawafa666-eng/plot-workbench-templates')
+  expect(link?.target).toBe('_blank')
+})
+
+it('uses the native existing-folder picker for project creation', async () => {
+  vi.mocked(pickDirectory).mockResolvedValueOnce('D:\\研究\\已有数据')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-project-create]')!.click())
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-project-browse]')!.click())
+  expect(pickDirectory).toHaveBeenCalledWith('选择项目文件夹')
+  expect(document.querySelector<HTMLInputElement>('[data-wb-project-path]')?.value).toBe('D:\\研究\\已有数据')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-project-confirm]')!.click())
+  expect(document.querySelector('[data-dialog="workbench-create-project"]')).toBeNull()
+  expect(document.querySelector('h1')?.textContent).toContain('已有数据')
 })

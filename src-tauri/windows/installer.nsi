@@ -863,8 +863,7 @@ Section Install
   ; 上游只在静默/被动安装时建，GUI 安装靠完成页那个伪 README 复选框——
   ; 而它**默认就是勾上的**，所以「装完桌面上有 Tavotto」一直是既有默认
   ; 行为。完成页不再提供这个选择，就把同一件事收进这里，三种安装方式
-  ; 一致。/NS（不建快捷方式）与 /UPDATE（升级不动用户已有快捷方式）的
-  ; 豁免在 CreateOrUpdateDesktopShortcut 内部，语义一个字没改。
+  ; 一致。/NS 与 /UPDATE 不创建用户已删除的快捷方式；已有快捷方式只刷新图标。
   Call CreateOrUpdateDesktopShortcut
 
   ; TAVOTTO PATCH: 登记安装清单，让外部程序发现得了这台机器上的 CLI ------
@@ -1134,6 +1133,30 @@ Function un.SkipIfPassive
   ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
 FunctionEnd
 
+; TAVOTTO PATCH: a standalone icon avoids the implicit executable-icon fallback.
+; Refresh existing links during /UPDATE as well, keeping arguments, hotkeys and
+; window state. Only touch shortcuts that still point at this installation.
+!macro RefreshWorkbenchShortcutIcon shortcut
+  !insertmacro IsShortcutTarget "${shortcut}" "$INSTDIR\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+    ${If} $0 P<> 0
+      ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}",.r1)'
+      ${If} $1 P<> 0
+        ${IPersistFile::Load} $1 '("${shortcut}", ${STGM_READWRITE}).r2'
+        ${If} $2 = 0
+          ${IShellLink::SetIconLocation} $0 '(w "$INSTDIR\workbench.ico", 0)'
+          ${IPersistFile::Save} $1 '("${shortcut}",1)'
+          System::Call 'shell32::SHChangeNotify(i 0x00002000, i 0x0005, w "${shortcut}", p 0)'
+        ${EndIf}
+        ${IUnknown::Release} $1 ""
+      ${EndIf}
+      ${IUnknown::Release} $0 ""
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 Function CreateOrUpdateStartMenuShortcut
   ; We used to use product name as MAINBINARYNAME
   ; migrate old shortcuts to target the new MAINBINARYNAME
@@ -1153,6 +1176,9 @@ Function CreateOrUpdateStartMenuShortcut
     StrCpy $R0 1
   ${EndIf}
 
+  !insertmacro RefreshWorkbenchShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+  !insertmacro RefreshWorkbenchShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+
   ${If} $R0 = 1
     Return
   ${EndIf}
@@ -1168,10 +1194,10 @@ Function CreateOrUpdateStartMenuShortcut
 
   !if "${STARTMENUFOLDER}" != ""
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
-    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
-    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
 FunctionEnd
@@ -1179,10 +1205,16 @@ FunctionEnd
 Function CreateOrUpdateDesktopShortcut
   ; We used to use product name as MAINBINARYNAME
   ; migrate old shortcuts to target the new MAINBINARYNAME
+  StrCpy $R0 0
   !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    StrCpy $R0 1
+  ${EndIf}
+
+  !insertmacro RefreshWorkbenchShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk"
+  ${If} $R0 = 1
     Return
   ${EndIf}
 
@@ -1195,6 +1227,6 @@ Function CreateOrUpdateDesktopShortcut
     ${EndIf}
   ${EndIf}
 
-  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
   !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd

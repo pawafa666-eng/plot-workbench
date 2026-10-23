@@ -6,7 +6,9 @@ Windows x64 安装包自带 Python 与 Matplotlib、pandas、seaborn、openpyxl�
 
 ## 安装和使用
 
-从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载经验证的 Windows x64 安装程序，双击安装后从开始菜单打开 **Plot Workbench**。新建项目，导入表格，核对数据预览并选择绘图模板。详细步骤见 [使用说明](docs/workbench/usage.md)。
+从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载经验证的 Windows x64 安装程序，双击安装后从开始菜单打开 **Plot Workbench**。新建项目时选择已有工作文件夹，生成文件集中在 `.plot-workbench` 子目录。支持直接运行普通 Matplotlib 脚本并保存全部图形。详细步骤见 [使用说明](docs/workbench/usage.md)。
+
+[在线模板库](https://github.com/pawafa666-eng/plot-workbench-templates) 提供 20 个带预览的可运行示例，可复制到自己的模板库。
 
 ## 开发和构建
 

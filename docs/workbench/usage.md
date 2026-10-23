@@ -10,7 +10,9 @@ Plot Workbench 是在本机运行的科研绘图工作台。Windows x64 安装�
 
 ## 选择数据
 
-导入 CSV、XLSX 或 XLS 文件。Excel 可选择工作表；CSV 可选择编码与分隔符。行和列分别添加一个或多个范围：编号从 **1** 开始，包含起止位置；**0 至 0** 表示全部，多个范围按添加顺序合并并去重。「所选第一行作为表头」从所选区域提取表头。
+导入 CSV、XLSX 或 XLS 文件。Excel 可选择工作表；CSV 可选择编码与分隔符。行和列分别添加一个或多个范围：编号从 **1** 开始，包含起止位置，多个范围按添加顺序拼接。重叠、重复、越界和反向范围会被拒绝。
+
+**0 至 0** 表示全部。`0` 只能用于第一个范围的起点或最后一个范围的终点，分别表示第一行／列或最后一行／列。例如行 `1–5、7–9` 配合列 `1–2、4–4`，得到 **8 行 × 3 列**。「所选第一行作为表头」会提取第一行作为列名，该行不计入绘图尺寸。
 
 预览最多显示 **50 行 × 50 列**，该限制不会截断实际导入的数据。需要调整方向时，可交换指定行、交换指定列或转置。转置后的表头及索引随数据一起保存。
 
@@ -32,7 +34,9 @@ Windows 配置保存在 `%APPDATA%\PlotWorkbench`，缓存和日志保存在 `%L
 
 ## 安装与构建
 
-双击 `Plot-Workbench-1.0.0-Windows-x64-Setup.exe`，选择安装目录，完成后从开始菜单启动 **Plot Workbench**。卸载使用 Windows「已安装的应用」。发布包目前没有代码签名，Windows 可能显示发布者未知。
+从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载 Windows x64 的 `Setup.exe`，双击安装，完成后从开始菜单启动 **Plot Workbench**。卸载使用 Windows「已安装的应用」。更新包使用 minisign 签名；安装程序目前没有 Windows Authenticode 发布者证书。
+
+检查新版本时，打开「设置 → 关于与隐私 → 检查更新」，按「立即检查」。启动软件和打开设置页都不会自动检查。发现新版本后可确认下载并安装，安装前验证更新签名；安装完成后重启软件。早期 1.0.0 用户需要手动覆盖安装一次带更新器的版本。
 
 开发构建运行 `python scripts/workbench_build.py`。完整 Windows 构建需要 Python 打包依赖、pnpm、Rust 与 MSVC/Windows SDK；仓库的 **Plot Workbench Windows** GitHub Actions 使用 Windows runner 构建，验证安装、运行与卸载后才上传安装包。
 

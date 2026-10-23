@@ -33,7 +33,7 @@ pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w "$env:USERPROFILE\.tauri\plot
 
 ## 发布新版本
 
-仓库当前版本为 `1.0.0`，这版安装程序早于 updater 接入，不能在软件内自查。首个带更新器的稳定版应为 `1.0.1` 或更高；现有用户要先从 Releases 手动下载并覆盖安装一次，之后才可在软件内更新。将以下版本保持一致：
+早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。首个带更新器的稳定版为 `1.0.1`；早期用户要先从 Releases 手动下载并覆盖安装一次，之后才可在软件内更新。每次发布新版本时，将以下版本保持一致：
 
 - `src/tavotto/engine/brand.py` 的 `WORKBENCH_VERSION`
 - `src-tauri/tauri.conf.json` 的 `version`

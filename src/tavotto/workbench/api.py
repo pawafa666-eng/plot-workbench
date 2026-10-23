@@ -16,6 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 from tavotto.engine import atomicio, config
 
 from . import VERSION, data as table_data
+from .data_process import run_operation
 from .rendering import RenderService
 from .store import WorkbenchError, WorkbenchStore, checked_id, inside
 
@@ -389,7 +390,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             request.form.get("encoding", "utf-8-sig"),
             request.form.get("delimiter", ","),
         )
-        inspected = table_data.inspect_table(table)
+        inspected = run_operation("inspect", table=table)
         return jsonify(
             {
                 "table_id": manager.remember_table(table),
@@ -404,16 +405,24 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def select_data():
         body = _body()
         table = manager.table(_need(body, "table_id"))
-        snapshot = table_data.select_data(
-            table, _need(body, "rows"), _need(body, "columns"), body.get("header", False)
+        snapshot = run_operation(
+            "select",
+            table=table,
+            rows=_need(body, "rows"),
+            columns=_need(body, "columns"),
+            header=body.get("header", False),
         )
         return jsonify({"data": snapshot, "preview": table_data.preview_data(snapshot)})
 
     @bp.post("/data/transform")
     def transform_data():
         body = _body()
-        transformed = table_data.transform_data(
-            _need(body, "data"), _need(body, "operation"), body.get("i"), body.get("j")
+        transformed = run_operation(
+            "transform",
+            data=_need(body, "data"),
+            transform=_need(body, "operation"),
+            i=body.get("i"),
+            j=body.get("j"),
         )
         return jsonify({"data": transformed, "preview": table_data.preview_data(transformed)})
 

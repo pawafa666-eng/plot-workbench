@@ -267,3 +267,41 @@ def test_replace_external_script_keeps_a_backup_and_protects_template_source(tmp
     )
     with pytest.raises(WorkbenchError, match="模板"):
         manager.service.export_code(plot["id"], replace=True)
+
+
+def test_table_operations_do_not_import_scientific_stack_in_parent(client, monkeypatch):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def without_scientific_stack(name, *args, **kwargs):
+        if name.split(".")[0] in {"pandas", "numpy"}:
+            raise ModuleNotFoundError(f"parent must not import {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_scientific_stack)
+    inspected = client.post(
+        "/api/workbench/data/inspect",
+        data={"file": (io.BytesIO(b"x,y\n1,2\n3,4\n"), "data.csv")},
+    )
+    assert inspected.status_code == 200, inspected.get_json()
+    selected = client.post(
+        "/api/workbench/data/select",
+        json={
+            "table_id": inspected.get_json()["table_id"],
+            "rows": [{"start": 0, "end": 0}],
+            "columns": [{"start": 0, "end": 0}],
+            "header": True,
+        },
+    )
+    assert selected.status_code == 200, selected.get_json()
+    transformed = client.post(
+        "/api/workbench/data/transform",
+        json={"data": selected.get_json()["data"], "operation": "transpose"},
+    )
+    assert transformed.status_code == 200, transformed.get_json()
+    assert transformed.get_json()["data"]["values"] == [[1, 3], [2, 4]]
+    tagged = selected.get_json()["data"]
+    tagged["values"][0][1] = {"$type": "integer", "value": "2"}
+    compatible = client.post("/api/workbench/templates/compatible", json={"data": tagged})
+    assert compatible.status_code == 200, compatible.get_json()

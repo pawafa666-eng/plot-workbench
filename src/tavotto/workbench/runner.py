@@ -19,15 +19,39 @@ def load_module(path, name):
 
 
 def run(directory):
+    directory = Path(directory).resolve()
+    context = json.loads((directory / "input.json").read_text("utf-8"))
+    data_module = load_module(context["data_helper"], "pwb_snapshot_data")
+    if "operation" in context:
+        operation = context["operation"]
+        if operation in ("inspect", "select"):
+            stored = context["table"]
+            table = data_module.ParsedTable(
+                rows=[[data_module._decode_cell(cell) for cell in row] for row in stored["rows"]],
+                source=stored["source"],
+            )
+            if operation == "inspect":
+                result = data_module.inspect_table(table)
+            else:
+                result = data_module.select_data(
+                    table, context["rows"], context["columns"], context.get("header", False)
+                )
+        elif operation == "transform":
+            result = data_module.transform_data(
+                context["data"], context["transform"], context.get("i"), context.get("j")
+            )
+        else:
+            raise ValueError("Unknown table operation")
+        (directory / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False, allow_nan=False), "utf-8"
+        )
+        return
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
 
-    directory = Path(directory).resolve()
-    context = json.loads((directory / "input.json").read_text("utf-8"))
-    data_module = load_module(context["data_helper"], "pwb_snapshot_data")
     source = load_module(directory / "base.py", "pwb_user_plot")
     if not callable(getattr(source, "build_figure", None)):
         raise ValueError("代码必须提供 build_figure(data) 函数，并返回一个 Figure")

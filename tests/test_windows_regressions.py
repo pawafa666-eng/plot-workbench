@@ -3637,3 +3637,25 @@ def test_desktop_smoke_preserves_failed_startup_logs(tmp_path):
     assert result.returncode != 0
     output = (diagnostics / "sidecar.log").read_text("utf-8", errors="replace")
     assert "--desktop-sidecar" in output
+
+
+def test_workbench_schema_checks_tagged_cells_without_parent_pandas(monkeypatch):
+    """The frozen Flask parent excludes pandas; tagged cells must remain checkable."""
+    import builtins
+
+    from tavotto.workbench.data import validate_schema
+    from tavotto.workbench.examples import EXAMPLES, example_snapshot
+
+    original_import = builtins.__import__
+
+    def without_pandas(name, *args, **kwargs):
+        if name.split(".")[0] in {"pandas", "numpy"}:
+            raise ModuleNotFoundError(f"parent must not import {name}")
+        return original_import(name, *args, **kwargs)
+
+    snapshot = example_snapshot(EXAMPLES[1])
+    snapshot["values"][0][1] = {"$type": "integer", "value": "2"}
+    monkeypatch.setattr(builtins, "__import__", without_pandas)
+    assert validate_schema(snapshot, EXAMPLES[1]["schema"]) == []
+    snapshot["values"][0][1] = {"$type": "timestamp", "value": "2026-10-23"}
+    assert validate_schema(snapshot, EXAMPLES[1]["schema"])[0]["code"] == "dtype_mismatch"

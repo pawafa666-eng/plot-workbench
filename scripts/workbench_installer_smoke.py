@@ -226,7 +226,17 @@ def main() -> None:
                 ],
                 env,
             )
-            run([sys.executable, "scripts/smoke_desktop.py", "--sidecar", str(sidecar)], env)
+            run(
+                [
+                    sys.executable,
+                    "scripts/smoke_desktop.py",
+                    "--sidecar",
+                    str(sidecar),
+                    "--diagnostics",
+                    str(ROOT / "build" / "workbench-installer-smoke" / "desktop"),
+                ],
+                env,
+            )
             run(
                 [
                     sys.executable,

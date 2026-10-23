@@ -3612,3 +3612,28 @@ def test_no_unguarded_os_kill_zero():
     # 正面形式：扫描真的看见了已知的正确写法——rglob 坏了 / 识别器全失灵时这里先红，而不是一片空绿
     assert any(g.startswith("tests/support/procprobe.py:") for g in guarded), guarded
     assert not unparsable, f"这些文件解析不了，判据看不见它们：{unparsable}"
+
+
+def test_desktop_smoke_preserves_failed_startup_logs(tmp_path):
+    """A failed sidecar launch must retain the output needed to diagnose it."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    diagnostics = tmp_path / "diagnostics"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "smoke_desktop.py"),
+            "--sidecar",
+            sys.executable,
+            "--diagnostics",
+            str(diagnostics),
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    output = (diagnostics / "sidecar.log").read_text("utf-8", errors="replace")
+    assert "--desktop-sidecar" in output

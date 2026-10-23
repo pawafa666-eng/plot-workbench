@@ -21,6 +21,40 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
+def test_close_only_targets_the_desktop_frame_not_visible_runtime_windows(monkeypatch):
+    # The real Windows candidate also exposes WS_VISIBLE message sinks. Closing
+    # Tao's event target first destroys dispatch before Tauri can finish Exit.
+    # Visibility alone does not mean a user-facing application window.
+    windows = [
+        {"handle": 101, "class": "Tauri Window", "visible": True},
+        {"handle": 102, "class": "workbench-sic", "visible": True},
+        {"handle": 103, "class": "Tao Thread Event Target", "visible": True},
+        {"handle": 104, "class": "Tauri Window", "visible": False},
+    ]
+    observed = []
+
+    def native_windows(pid):
+        observed.append(pid)
+        return windows
+
+    posted = []
+
+    def post(window, message, wparam, lparam):
+        posted.append((window.value, message, wparam, lparam))
+        return True
+
+    monkeypatch.setattr(smoke, "native_windows", native_windows)
+    monkeypatch.setattr(
+        smoke.ctypes,
+        "windll",
+        SimpleNamespace(user32=SimpleNamespace(PostMessageW=post)),
+        raising=False,
+    )
+    assert smoke.close_window(412) == 1
+    assert observed == [412]
+    assert posted == [(101, 0x0010, 0, 0)]
+
+
 @pytest.mark.parametrize("protected_status", [401, 200])
 def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
     tmp_path, monkeypatch, protected_status

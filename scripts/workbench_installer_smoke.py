@@ -71,7 +71,16 @@ def native_windows(pid: int) -> list[dict]:
 
 
 def close_window(pid: int) -> int:
-    windows = [window for window in native_windows(pid) if window["visible"]]
+    # EnumWindows includes the single-instance and Tao event-target windows.
+    # Both can carry WS_VISIBLE despite being internal message sinks. Sending
+    # WM_CLOSE to those destroys dispatch and strands an otherwise healthy app.
+    # The native user-facing frames created by this pinned Tauri runtime use
+    # this class; never send input to another process or another window class.
+    windows = [
+        window
+        for window in native_windows(pid)
+        if window["visible"] and window["class"] == "Tauri Window"
+    ]
     for window in windows:
         if not ctypes.windll.user32.PostMessageW(ctypes.c_void_p(window["handle"]), 0x0010, 0, 0):
             raise RuntimeError("Could not post WM_CLOSE to the installed native window")
@@ -183,7 +192,8 @@ def shell_smoke(shell: Path, env: dict) -> None:
         conf = ROOT / "src-tauri/tauri.conf.json"
         if conf.is_file():
             app_id = json.loads(conf.read_text("utf-8"))["identifier"]
-            log = Path(os.environ.get("LOCALAPPDATA", "")) / app_id / "logs/sidecar.log"
+            local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+            log = local / app_id / "logs/sidecar.log"
             if log.is_file():
                 text = log.read_text("utf-8", errors="replace")[-128_000:]
                 text = re.sub(r"dnonce=[A-Za-z0-9_-]+", "dnonce=[redacted]", text)

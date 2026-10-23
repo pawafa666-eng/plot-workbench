@@ -26,6 +26,7 @@ def execute(
     input_directory=None,
     input_files=(),
     original_directory=None,
+    legacy_template=False,
 ):
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
@@ -44,7 +45,7 @@ def execute(
         raise FileNotFoundError(f"项目工作目录不存在：{root}")
     filename = str(Path(source_path).resolve()) if source_path else str(root / "plot.py")
     namespace = {
-        "__name__": "__main__",
+        "__name__": "_pwb_user_plot" if legacy_template else "__main__",
         "__file__": filename,
         "__package__": None,
     }
@@ -167,6 +168,7 @@ def capture(context, *, directory):
         input_directory=context.get("input_directory"),
         input_files=context.get("input_files", []),
         original_directory=context.get("original_directory"),
+        legacy_template=context.get("legacy_template", False),
     )
     outputs = []
     for index, figure in enumerate(figures):

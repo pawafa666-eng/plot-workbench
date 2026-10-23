@@ -91,7 +91,9 @@ it('provides the online template repository from the template library', async ()
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-nav-templates]')!.click())
   const link = document.querySelector<HTMLAnchorElement>('[data-wb-online-templates]')
   expect(link?.href).toBe('https://github.com/pawafa666-eng/plot-workbench-templates')
-  expect(link?.target).toBe('_blank')
+  // The native navigation guard hands this URL to the system browser.
+  // WebView2 popup links can be blocked before that guard is called.
+  expect(link?.target).toBe('_self')
 })
 
 it('uses the native existing-folder picker for project creation', async () => {

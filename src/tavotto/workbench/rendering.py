@@ -54,7 +54,8 @@ def main(_capture=True):
     _figures, _snapshot = _helper.execute(PWB_SOURCE, _context["data"], _context.get("schema", {{}}),
         working_directory=_context["working_directory"], source_path=_context.get("original_path"),
         data_helper=_context["data_helper"], input_directory=_context["input_directory"],
-        input_files=_context.get("input_files", []), original_directory=_context.get("original_directory"))
+        input_files=_context.get("input_files", []), original_directory=_context.get("original_directory"),
+        legacy_template=_context.get("legacy_template", False))
     for _index, _fig in enumerate(_figures):
         _stem = "figure" if _index == 0 else f"figure_{{_index + 1}}"
         if _capture:
@@ -349,6 +350,7 @@ class RenderService:
                     "environment": job.get("environment", {}),
                     "outputs": job["outputs"],
                     "input_files": job.get("input_files", []),
+                    "execution_version": 2,
                 },
                 job["directory"],
             )
@@ -406,6 +408,7 @@ class RenderService:
                 "data_helper": str(directory / "data_helper.py"),
                 "input_directory": str(directory / "inputs"),
                 "input_files": plot.get("input_files", []),
+                "legacy_template": not plot.get("execution_version"),
             },
         )
         adapter = """import importlib.util
@@ -641,6 +644,7 @@ def main():
                 "original_path": plot.get("source", {}).get("original_path"),
                 "original_directory": str(self.store.working_directory(plot["project_id"])),
                 "input_files": plot.get("input_files", []),
+                "legacy_template": not plot.get("execution_version"),
             },
         )
         atomicio.write_bytes(

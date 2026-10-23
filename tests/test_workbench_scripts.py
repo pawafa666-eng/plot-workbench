@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+from tavotto.workbench.examples import EXAMPLES, example_snapshot
 from tavotto.workbench.rendering import RenderService
 from tavotto.workbench.store import WorkbenchStore
 from test_workbench_rendering import wait_job
@@ -124,3 +125,20 @@ for column in range(2):
     assert len(list((tmp_path / "export").glob("*.png"))) == 2
     service.close()
     restarted.close()
+
+
+def test_v1_function_project_keeps_its_original_execution_semantics(tmp_path):
+    store = WorkbenchStore(tmp_path / "library")
+    project = store.create_project("Legacy")
+    plot = store.create_plot(project["id"], "Legacy function")
+    legacy_code = (
+        EXAMPLES[1]["code"]
+        + '\nif __name__ == "__main__":\n    raise RuntimeError("CLI must not run for a v1 snapshot")\n'
+    )
+    store.commit_plot(
+        plot["id"], {"code": legacy_code, "data": example_snapshot(EXAMPLES[1]), "schema": {}}
+    )
+    service = RenderService(store, tmp_path / "jobs")
+    session = service.open_session(plot["id"])
+    assert session["manifest"]["size_mm"][0] > 0
+    service.close()

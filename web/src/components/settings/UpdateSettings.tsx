@@ -241,10 +241,6 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     relaunching,
     relaunchFailed,
   } = useUpdateStore()
-  useEffect(() => {
-    if (!desktopChecked) void checkDesktop()
-  }, [desktopChecked, checkDesktop])
-
   const busy = desktopPhase !== 'idle'
   const pct = desktopProgress === null ? null : Math.round(desktopProgress * 100)
 

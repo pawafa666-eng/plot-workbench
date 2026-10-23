@@ -886,6 +886,7 @@ def api_version():
         {
             "build": build,
             "version": engine_updater.current_version(),
+            "app_version": engine_brand.WORKBENCH_VERSION,
             "features": [DESKTOP_REMOTE_WINDOW_FEATURE],
         }
     )
@@ -7512,7 +7513,7 @@ def _updater_disabled_in_desktop():
                 "desktop": True,
                 "auto_check": False,
                 "update_available": False,
-                "current": engine_updater.current_version(),
+                "current": engine_brand.WORKBENCH_VERSION,
                 "repo_url": engine_brand.REPO_URL,
                 "releases_url": engine_brand.RELEASES_URL,
             }

@@ -1,5 +1,6 @@
 import io
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -30,8 +31,23 @@ def settle(client, job_id):
     raise AssertionError("job did not settle")
 
 
+def create_folder_project(client, name):
+    manager = client.application.config["WORKBENCH_MANAGER"]
+    folder = manager.root.parent / f"workspace-{uuid.uuid4().hex}"
+    folder.mkdir()
+    response = client.post("/api/workbench/projects", json={"name": name, "path": str(folder)})
+    assert response.status_code == 200, response.get_json()
+    return response.get_json()
+
+
+def test_project_creation_requires_an_explicit_existing_folder(client):
+    for payload in ({"name": "P"}, {"path": ""}, {"path": None}):
+        response = client.post("/api/workbench/projects", json=payload)
+        assert response.status_code == 400
+
+
 def test_projects_plots_render_save_and_export(client):
-    project = client.post("/api/workbench/projects", json={"name": "试验"}).get_json()
+    project = create_folder_project(client, "试验")
     plot = client.post(
         f"/api/workbench/projects/{project['id']}/plots", json={"name": "曲线"}
     ).get_json()
@@ -64,6 +80,13 @@ def test_projects_plots_render_save_and_export(client):
     for fmt in ("png", "svg", "pdf"):
         response = client.get(f"/api/workbench/plots/{plot['id']}/export?format={fmt}")
         assert response.status_code == 200 and len(response.data) > 100
+    exported = client.post(
+        f"/api/workbench/plots/{plot['id']}/export-image", json={"format": "png", "stem": "figure"}
+    )
+    assert exported.status_code == 200
+    destination = Path(exported.get_json()["path"])
+    assert destination.is_relative_to(Path(project["path"]) / "exports")
+    assert destination.read_bytes().startswith(b"\x89PNG")
 
 
 def test_table_import_is_confirmed_and_uses_inclusive_ranges(client):
@@ -96,7 +119,7 @@ def test_table_import_is_confirmed_and_uses_inclusive_ranges(client):
 
 def test_template_requires_successful_matching_run_and_compatible_dimensions(client):
     template = client.get("/api/workbench/templates").get_json()["templates"][0]
-    project = client.post("/api/workbench/projects", json={"name": "P"}).get_json()
+    project = create_folder_project(client, "P")
     data = template["data"]
     matches = client.post(
         "/api/workbench/templates/compatible", json={"project_id": project["id"], "data": data}
@@ -133,7 +156,7 @@ def test_template_requires_successful_matching_run_and_compatible_dimensions(cli
 
 
 def test_tavotto_only_plot_rejects_new_code_data_and_render(client, tmp_path):
-    project = client.post("/api/workbench/projects", json={"name": "P"}).get_json()
+    project = create_folder_project(client, "P")
     plot = client.post(
         f"/api/workbench/projects/{project['id']}/plots", json={"name": "F"}
     ).get_json()
@@ -249,7 +272,10 @@ def test_replace_external_script_keeps_a_backup_and_protects_template_source(tmp
     )
     replaced = manager.service.export_code(plot["id"], replace=True)
     assert Path(replaced["backup"]).read_text("utf-8") == "old code"
-    assert Path(replaced["path"]).read_text("utf-8").startswith("def build_figure")
+    assert (Path(replaced["files"][1]) / "original.py").read_text(
+        "utf-8"
+    ) == "def build_figure(data):\n    return None\n"
+    compile(Path(replaced["path"]).read_text("utf-8"), replaced["path"], "exec")
 
     template = manager.store.list_templates()[0]
     protected = manager.store.template_dir(template["id"]) / "source.py"
@@ -267,3 +293,41 @@ def test_replace_external_script_keeps_a_backup_and_protects_template_source(tmp
     )
     with pytest.raises(WorkbenchError, match="模板"):
         manager.service.export_code(plot["id"], replace=True)
+
+
+def test_table_operations_do_not_import_scientific_stack_in_parent(client, monkeypatch):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def without_scientific_stack(name, *args, **kwargs):
+        if name.split(".")[0] in {"pandas", "numpy"}:
+            raise ModuleNotFoundError(f"parent must not import {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_scientific_stack)
+    inspected = client.post(
+        "/api/workbench/data/inspect",
+        data={"file": (io.BytesIO(b"x,y\n1,2\n3,4\n"), "data.csv")},
+    )
+    assert inspected.status_code == 200, inspected.get_json()
+    selected = client.post(
+        "/api/workbench/data/select",
+        json={
+            "table_id": inspected.get_json()["table_id"],
+            "rows": [{"start": 0, "end": 0}],
+            "columns": [{"start": 0, "end": 0}],
+            "header": True,
+        },
+    )
+    assert selected.status_code == 200, selected.get_json()
+    transformed = client.post(
+        "/api/workbench/data/transform",
+        json={"data": selected.get_json()["data"], "operation": "transpose"},
+    )
+    assert transformed.status_code == 200, transformed.get_json()
+    assert transformed.get_json()["data"]["values"] == [[1, 3], [2, 4]]
+    tagged = selected.get_json()["data"]
+    tagged["values"][0][1] = {"$type": "integer", "value": "2"}
+    compatible = client.post("/api/workbench/templates/compatible", json={"data": tagged})
+    assert compatible.status_code == 200, compatible.get_json()

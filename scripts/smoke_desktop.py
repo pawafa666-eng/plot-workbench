@@ -205,6 +205,7 @@ def main() -> None:
         help="sidecar 可执行文件（dist/Tavotto/Tavotto 或 .venv/bin/tavotto）",
     )
     ap.add_argument("--figures", default=str(ROOT / "examples" / "figures"))
+    ap.add_argument("--diagnostics", type=Path, help="保留隔离冒烟进程的启动日志")
     args = ap.parse_args()
 
     exe = Path(args.sidecar).resolve()
@@ -223,14 +224,15 @@ def main() -> None:
     }
     env.pop("TAVOTTO_DESKTOP_NONCE", None)
 
-    proc = subprocess.Popen(
-        [str(exe), "--desktop-sidecar"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=env,
-        cwd=str(tmp),
-    )
+    with (tmp / "sidecar.log").open("wb") as output:
+        proc = subprocess.Popen(
+            [str(exe), "--desktop-sidecar"],
+            stdin=subprocess.PIPE,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env=env,
+            cwd=str(tmp),
+        )
     try:
         # 凭据走 stdin 首行（与 Tauri 壳同一协议）；管道保持打开
         assert proc.stdin is not None
@@ -381,6 +383,15 @@ def main() -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=10)
+        if args.diagnostics:
+            args.diagnostics.mkdir(parents=True, exist_ok=True)
+            for source in (tmp / "sidecar.log", tmp / "data" / "cache" / "app.log"):
+                if source.is_file():
+                    log = source.read_text("utf-8", errors="replace").replace(NONCE, "<nonce>")
+                    (args.diagnostics / source.name).write_text(log, "utf-8")
+                    if log.strip():
+                        print(f"--- {source.name} ---\n{log[-12000:]}")
         shutil.rmtree(tmp, ignore_errors=True)
 
 

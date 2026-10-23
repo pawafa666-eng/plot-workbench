@@ -4079,7 +4079,7 @@ dependencies = [
 
 [[package]]
 name = "plot-workbench-desktop"
-version = "1.0.0"
+version = "1.1.2"
 dependencies = [
  "objc2",
  "percent-encoding",
@@ -4093,6 +4093,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "url",
 ]

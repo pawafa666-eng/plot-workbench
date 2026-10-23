@@ -15,7 +15,7 @@
   8 小时 20 分），不靠抬数字续命，靠加片给余量，上限继续钉在 60。改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
-  的断言，以及 `.github/workflows/ci.yml` 里那个 job 的实测评论。
+  的断言，以及对应 job 的实测评论。
   分片在**同一进程 collection 之后**做（`tests/conftest.py` → `tests/support/shard.py`）：每个进程
   算出全部 N 片，自验 **nodeid 集合**的并集 == 全集、两两不交、每片非空、无重复，任一条不成立
   rc 4——不是静默跑全集，也不是静默跑空集。**不带 `--shard` 时钩子是 no-op**，nightly.yml /

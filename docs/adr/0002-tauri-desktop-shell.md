@@ -263,6 +263,20 @@ Tauri bundler）。
   （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
   一半才发现对不上的），看护 `tests/test_updater_manifest.py`。
 
+## Plot Workbench fork 的手动更新（2026-10-21）
+
+上面的自动检查和多平台发行决策保留为 Tavotto 上游历史。Plot Workbench Windows 版
+覆盖为设置页手动检查：应用启动、打开设置页和系统菜单导航都不访问 Releases；只有
+设置页的“立即检查”按钮调用 Tauri updater。发现版本后页面提供发行说明，用户再次
+确认后才下载并验签安装。
+
+稳定 tag 构建才启用 `createUpdaterArtifacts`。`scripts/workbench_build.py` 将从
+`engine.brand.REPO_URL` 派生的唯一 endpoint 与 Actions Variable
+`TAURI_UPDATER_PUBLIC_KEY` 合并到 Tauri CLI 的临时配置覆盖；普通分支配置不含更新
+endpoint。私钥只存在 `TAURI_SIGNING_PRIVATE_KEY` Actions Secret。发布工作流在上传前
+用 `scripts/check_updater_key.py` 校验签名与嵌入公钥配对，并在独立的写权限 job 生成
+只含 `windows-x86_64` 的 `latest.json`。更新器权限只授给本机主窗口，不授给远程实例。
+
 ## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
 
 - **端口不再每次都变。** 上文「启动」一条与「桌面/浏览器模式边界」表里的 `127.0.0.1:0` 改为：壳把记在

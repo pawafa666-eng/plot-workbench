@@ -7,7 +7,7 @@ retain Tavotto identifiers so existing engine contracts remain compatible.
 
 PRODUCT_NAME = "Plot Workbench"
 PRODUCT_NAME_ZH = "绘图工作台"
-WORKBENCH_VERSION = "1.0.0"
+WORKBENCH_VERSION = "1.1.2"
 APP_DATA_NAME = "PlotWorkbench"
 APP_DATA_SLUG = "plot-workbench"
 UPSTREAM_NAME = "Tavotto"
@@ -23,6 +23,7 @@ DIST_NAME = "tavotto"  # PyPI / wheel 包名
 REPO_OWNER = "pawafa666-eng"
 REPO_NAME = "plot-workbench"
 REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
+TEMPLATE_REPO_URL = f"https://github.com/{REPO_OWNER}/plot-workbench-templates"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 RELEASES_URL = f"{REPO_URL}/releases"
 

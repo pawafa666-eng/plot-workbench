@@ -6,7 +6,9 @@ Windows x64 安装包自带 Python 与 Matplotlib、pandas、seaborn、openpyxl�
 
 ## 安装和使用
 
-双击经验证的 `Plot-Workbench-1.0.0-Windows-x64-Setup.exe`，完成安装后从开始菜单打开 **Plot Workbench**。新建项目，导入表格，核对数据预览并选择绘图模板。详细步骤见 [使用说明](docs/workbench/usage.md)。
+从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载经验证的 Windows x64 安装程序，双击安装后从开始菜单打开 **Plot Workbench**。新建项目时选择已有工作文件夹，生成文件集中在 `.plot-workbench` 子目录。支持直接运行普通 Matplotlib 脚本并保存全部图形。详细步骤见 [使用说明](docs/workbench/usage.md)。
+
+[在线模板库](https://github.com/pawafa666-eng/plot-workbench-templates) 提供 20 个带预览的可运行示例，可复制到自己的模板库。
 
 ## 开发和构建
 
@@ -19,7 +21,7 @@ pnpm --dir web install --frozen-lockfile
 .venv\Scripts\python scripts/workbench_build.py
 ```
 
-安装包输出到 `dist/Plot-Workbench-1.0.0-Windows-x64-Setup.exe`。也可运行仓库中的 **Plot Workbench Windows** GitHub Actions；只有打包产物通过安装、内置 Python 渲染和卸载检查后才上传 artifact。
+安装包输出到 `dist/Plot-Workbench-<version>-Windows-x64-Setup.exe`。也可运行仓库中的 **Plot Workbench Windows** GitHub Actions；只有打包产物通过安装、内置 Python 渲染和卸载检查后才上传 artifact。
 
 用户数据、项目、缓存、导出图与安装包均不进入 Git。
 

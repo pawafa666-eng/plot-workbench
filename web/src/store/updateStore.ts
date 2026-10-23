@@ -12,17 +12,15 @@ import {
 import {
   checkDesktopUpdate,
   installDesktopUpdate,
-  isDesktop,
   relaunchDesktop,
   type DesktopUpdateInfo,
 } from '@/lib/desktop'
 import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 
 /**
- * 版本更新状态。启动时静默取一次（后端有 24h 节流，不会真的每次都联网），
- * 拿到 update_available 才露出提示——启动时弹一次 `UpdateNoticeDialog`
- * （「稍后」按版本记住）+「⋯」上的圆点；用户在
- * 「设置 → 检查更新」里可以手动立即检查、关掉自动检查、或直接执行升级。
+ * 版本更新状态。Plot Workbench 桌面版不会在启动或打开设置时请求 Releases；
+ * 用户只在「设置 → 关于与隐私 → 检查更新」按按钮后才查。发现新版后在设置页
+ * 显示结果，下载与安装仍需要用户再次确认。
  *
  * 升级永远不静默进行：学术制图要可复现，版本什么时候变必须是用户按下按钮的结果。
  *
@@ -258,13 +256,3 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 }))
-
-/**
- * 启动时静默查一次。**桌面与浏览器各走各的**：桌面壳里后端的 updater 是
- * 关着的，查它只会拿到一句「已停用」；浏览器模式里 Tauri 的 check 根本不存在。
- */
-export function checkUpdateOnStartup(): void {
-  const s = useUpdateStore.getState()
-  if (isDesktop()) void s.checkDesktop()
-  else void s.check(false)
-}

@@ -24,8 +24,8 @@
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
 - **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/` 里**该拿它的
-  那个窗口**加 `allow-<命令名连字符化>`（主窗口 `main.json`，远程实例窗口
-  `remote-*.json`）、`main.rs` 的 `generate_handler`。漏掉前两处
+  那个窗口**加 `allow-<命令名连字符化>`（本 fork 只有主窗口 `main.json`）、
+  `main.rs` 的 `generate_handler`。漏掉前两处
   invoke 会被**静默拒绝**（reveal_export「点了没反应」就是这么坏的）；
   失败路径不许吞——回退时把完整文件路径告诉用户。三处齐全的看护读结构不读子串
   （`tests/support/rustsrc.py`，枚举在 `tests/test_desktop_codex_button.py`）。
@@ -43,12 +43,10 @@
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
   视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
   `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。
-- **远程实例窗口**（ADR 0105）：label `remote`，加载 `ssh -L` 转发过来的服务器引擎。
-  `incognito(true)`（cookie 不按端口隔离，共用存储会顶掉本机会话）+ 注入
-  `REMOTE_WINDOW_MARKER`（前端 `isDesktop()` 据它为假，本机文件类能力走浏览器回退）+
-  不装 native_drop。权限是闭集（`capabilities/remote-*.json`：只听事件不发、关窗询问、
-  壳自带页面的 `connect_remote`），**不许往里加本机文件类权限**；关窗闸按窗口各一道，
-  菜单发给聚焦窗口。看护 `tests/test_desktop_remote.py`。
+- **本 fork 仅保留本机主窗口**（2026-10-23）：用户要求移除「连接远程实例」。
+  原生菜单、`connect_remote` 命令、远程 capability 与连接页一并删除；
+  `tests/test_workbench_desktop.py` 看护实际命令闭集、窗口建造点与权限作用域。
+  ADR 0105 保留为上游历史；共享引擎的浏览器兼容契约与认证边界不改。
 - 桌面交接契约 argv `--open <目录> [--stem <stem>]`：生产者唯一
   `handoff.desktop_argv()`，消费者唯一 `src-tauri/src/main.rs::parse_open_args()`，
   两侧各有单测，改一边必须同步另一边（完整交接语义见
@@ -56,19 +54,23 @@
 - wheel/sdist 不含 `src-tauri/`（hatchling 白名单）；`src-tauri/target/`、
   `src-tauri/gen/` 进 .gitignore。
 
-## 更新通道（桌面归壳，2026-08-18）
+## Plot Workbench 更新通道（2026-10-21）
 
-- **桌面版走 `tauri-plugin-updater`**：下载签名过的安装包就地替换，装完
-  `relaunch`。两条通道互斥——后端在桌面模式把 `/api/update/*` 整个关掉，
-  前端 `checkUpdateOnStartup()` 按 `isDesktop()` 只查一条。
-  更新包的 minisign 私钥只在 CI，公钥写死在 tauri.conf.json；**没配私钥时
-  构建就地关掉 createUpdaterArtifacts 并打 warning**，安装包照发。
-  **macOS 的更新包必须在签名/公证之后重做**——tauri build 顺手打的那份装的是
-  没签名的 .app，换上去 Gatekeeper 当场拦。清单 `latest.json` 由
-  `scripts/make_updater_manifest.py` 在三条 matrix 腿（macOS arm64 / macOS x86_64 / Windows，ADR 0076）都跑完后合成
-  （少了它壳永远显示「已是最新」而 CI 全绿）。细节见 ADR 0002 末节。
-- 桌面模式下 Python updater 停用（升级归 Tauri 层），`/api/update/*` 回
-  禁用响应；浏览器模式照旧。
+- 桌面版由 `tauri-plugin-updater` 安装经过 minisign 验签的 Windows NSIS 包；
+  **只有设置页里的“立即检查”按钮可以查询 Releases**。应用启动和打开设置页不检查，
+  原生菜单只导航到设置。检查结果留在设置页，用户再按“下载并安装”后才下载。
+- 桌面 Python updater 仍停用。Tauri 插件权限 `updater:default` 只授给 `main-window`，
+  不向其他窗口授予该权限。
+- 普通分支构建不含更新 endpoint，也不生成 updater archive。只有稳定版本 tag 构建会
+  通过 `scripts/workbench_build.py` 注入来自 Actions Variable `TAURI_UPDATER_PUBLIC_KEY`
+  的公钥与 `engine.brand.REPO_URL` endpoint，并读取 Secrets 中的
+  `TAURI_SIGNING_PRIVATE_KEY`（和可选口令）生成签名包。提交前以
+  `scripts/check_updater_key.py` 对照签名与嵌入公钥；缺 key、tag/应用版本不一致、签名
+  或 manifest 不完整都必须阻止 Release。发布 job 是唯一拥有 `contents: write` 的 job。
+- 首个更新器版必须高于已有 `1.0.0` 安装。已安装的 1.0.0 若来自启用 updater 前的
+  构建，用户需先手动安装一次新安装包；之后该版本即可通过设置页更新。
+- 本 fork 仅发布 Windows x64 updater manifest；Tavotto 上游的 macOS 与多平台发布链
+  仍按 ADR 0002 的历史说明处理，不适用于 Plot Workbench。
 
 ## 构建、验收与安装界面
 
@@ -103,5 +105,8 @@
 前端起来后重建——已知限制，见 docs/i18n.md。
 **壳内文案不手写产品名**：`build.rs` 从 `brand.ts` / `engine/brand.py` 编译期注入
 `TAVOTTO_PRODUCT_NAME` / `TAVOTTO_DIST_NAME`，`ShellText` 里写 `concat!(env!(…), …)`，
-`connect.html` 由壳经 `?product=` / `?dist=` 带名字（`tests/test_desktop_i18n.py` 看护；
-splash / error 页与窗口标题是尚未收口的旧写法）。
+`tests/test_desktop_i18n.py` 看护品牌注入（splash / error 页与窗口标题是尚未收口的旧写法）。
+
+**Windows 快捷方式图标**：`assets/workbench/icon.ico` 同时用于 EXE 资源与安装目录
+`workbench.ico`；NSIS 新建快捷方式时显式指定它，更新时只修改仍指向本次安装的
+已有快捷方式的图标，保留用户参数与窗口状态，不重建用户已删除的快捷方式。

@@ -3,6 +3,7 @@ name: Plot Workbench Windows
 on:
   push:
     branches: [workbench/v1]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,8 @@ jobs:
   windows-installer:
     runs-on: windows-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -52,29 +55,60 @@ jobs:
           cargo test --manifest-path workerd/Cargo.toml
           $workbenchTests = @(Get-ChildItem tests/test_workbench*.py -File | ForEach-Object FullName)
           if ($workbenchTests.Count -eq 0) { throw "Workbench backend tests were not found" }
-          python -m pytest -q $workbenchTests
+          python -m pytest -q $workbenchTests tests/test_updater_manifest.py
           if ($LASTEXITCODE -ne 0) { throw "Workbench backend tests failed" }
-          pnpm --dir web exec vitest run src/workbench
+          pnpm --dir web exec vitest run src/workbench src/components/settings/updateStates.test.tsx src/store/updateStore.test.ts src/lib/desktop.golden.test.ts src/hooks/menuActions.test.tsx
           if ($LASTEXITCODE -ne 0) { throw "Workbench frontend tests failed" }
-          python -m ruff check src/tavotto/workbench tests/test_workbench_api.py tests/test_workbench_data.py tests/test_workbench_rendering.py tests/test_workbench_store.py tests/test_workbench_tavotto.py tests/test_workbench_packaging.py scripts/workbench_api_smoke.py scripts/workbench_build.py scripts/workbench_brand_assets.py scripts/workbench_generate_examples.py scripts/workbench_installer_smoke.py
+          python -m ruff check src/tavotto/workbench tests/test_workbench_api.py tests/test_workbench_data.py tests/test_workbench_rendering.py tests/test_workbench_store.py tests/test_workbench_tavotto.py tests/test_workbench_packaging.py tests/test_workbench_release_workflow.py tests/test_updater_manifest.py scripts/workbench_api_smoke.py scripts/workbench_build.py scripts/workbench_brand_assets.py scripts/workbench_generate_examples.py scripts/workbench_installer_smoke.py scripts/make_updater_manifest.py
           if ($LASTEXITCODE -ne 0) { throw "Workbench lint failed" }
+          python -m ruff check scripts/select_workbench_draft.py
+          if ($LASTEXITCODE -ne 0) { throw "Release metadata lint failed" }
           pnpm --dir web lint
           if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed" }
-      - name: Build Windows installer with private scientific runtime
+      - name: Build Windows installer
+        if: "!startsWith(github.ref, 'refs/tags/v')"
         run: python scripts/workbench_build.py
+      - name: Build signed Windows updater release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: python scripts/workbench_build.py --release-tag $env:GITHUB_REF_NAME
+      - name: Verify updater signature matches embedded public key
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $signatures = @(Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*.nsis.zip.sig')
+          if ($signatures.Count -ne 1) { throw "Expected one signed updater archive, found $($signatures.Count)" }
+          python scripts/check_updater_key.py --conf build/workbench-tauri-release.json --sig $signatures[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "Updater signature does not match the embedded public key" }
       - name: Check frozen PDF backend and license closure
         run: python scripts/ci/retirement_scan.py --dist dist/Tavotto
       - name: Install and verify without system Python on PATH
-        run: python scripts/workbench_installer_smoke.py --installer dist/Plot-Workbench-1.0.0-Windows-x64-Setup.exe
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem dist -Filter 'Plot-Workbench-*-Windows-x64-Setup.exe')
+          if ($installers.Count -ne 1) { throw "Expected one Workbench installer, found $($installers.Count)" }
+          python scripts/workbench_installer_smoke.py --installer $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "Installer smoke test failed" }
       - name: Upload verified installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Plot-Workbench-1.0.0-Windows-x64
+          name: Plot-Workbench-Installer
           path: |
-            dist/Plot-Workbench-1.0.0-Windows-x64-Setup.exe
-            dist/Plot-Workbench-1.0.0-Windows-x64-Setup.exe.sha256
+            dist/Plot-Workbench-*-Windows-x64-Setup.exe
+            dist/Plot-Workbench-*-Windows-x64-Setup.exe.sha256
           if-no-files-found: error
           retention-days: 30
+      - name: Upload signed updater archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Plot-Workbench-Updater
+          path: src-tauri/target/release/bundle/nsis/*.nsis.zip*
+          if-no-files-found: error
+          retention-days: 2
       - name: Upload build diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -85,3 +119,78 @@ jobs:
             build/workbench-installer-smoke/**
           if-no-files-found: ignore
           retention-days: 7
+      - name: Retain unverified candidate for local diagnosis
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UNVERIFIED-Windows-candidate
+          path: |
+            dist/Plot-Workbench-*-Windows-x64-Setup.exe*
+            src-tauri/target/release/bundle/nsis/*.nsis.zip*
+            build/workbench-tauri-release.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows-installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Download verified build assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name Plot-Workbench-Installer --dir release-assets/installer
+          gh run download "$GITHUB_RUN_ID" --name Plot-Workbench-Updater --dir release-assets/updater
+      - name: Verify installer checksum
+        run: |
+          cd release-assets/installer
+          sha256sum -c *.sha256
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="docs/workbench/releases/${GITHUB_REF_NAME}.md"
+          if [[ -f "$notes" ]]; then
+            cp -- "$notes" release-notes.md
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              --field tag_name="${GITHUB_REF_NAME}" \
+              --field target_commitish="${GITHUB_SHA}" \
+              --jq .body > release-notes.md
+          fi
+      - name: Validate signed update manifest
+        run: >-
+          python3 scripts/make_updater_manifest.py
+          --artifacts release-assets/updater
+          --tag "$GITHUB_REF_NAME"
+          --require windows-x86_64
+          --notes-file release-notes.md
+          --out release-assets/latest.json
+      - name: Publish stable Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release-assets/installer/* \
+            release-assets/updater/* \
+            release-assets/latest.json \
+            --title "$GITHUB_REF_NAME" \
+            --draft \
+            --notes-file release-notes.md
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > release-list.json
+          release_id="$(python3 scripts/select_workbench_draft.py --releases release-list.json --tag "$GITHUB_REF_NAME" --out release-metadata.json)"
+          python3 scripts/make_updater_manifest.py \
+            --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
+            --require windows-x86_64 --notes-file release-notes.md \
+            --out release-assets/latest.json --published-release release-metadata.json
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -f make_latest=true > published-release.json
+          python3 scripts/make_updater_manifest.py \
+            --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
+            --require windows-x86_64 --notes-file release-notes.md \
+            --out release-assets/latest.json --published-release published-release.json

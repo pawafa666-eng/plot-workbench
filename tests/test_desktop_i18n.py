@@ -191,7 +191,7 @@ def test_menu_and_ui_agree_on_shared_actions(locale: str, table: str):
 # 启动画面 / 失败页
 # --------------------------------------------------------------------------- #
 
-SHELL_PAGES = ["splash.html", "error.html", "connect.html"]
+SHELL_PAGES = ["splash.html", "error.html"]
 
 
 @pytest.mark.parametrize("page", SHELL_PAGES)
@@ -296,10 +296,8 @@ def test_ui_sources_never_handwrite_the_repo_url():
 # --------------------------------------------------------------------------- #
 # 壳里的产品名 / 命令名取品牌常量（Codex #702 P1）
 # --------------------------------------------------------------------------- #
-# 主语：**用户看得见的文案**——`ShellText` 两张表的每个字段值、远程实例窗口的起始页
-# `shell/connect.html`。产品名由 build.rs 从 `brand.ts` 的 `PRODUCT_NAME` 注入
-# （`env!("TAVOTTO_PRODUCT_NAME")`），命令名 / PyPI 包名从 `engine/brand.py` 的
-# `DIST_NAME` 注入、经 `connect_page_url` 带给页面（Rust 单测钉 URL）。
+# 主语：**用户看得见的文案**——`ShellText` 两张表的每个字段值。产品名由 build.rs
+# 从 `brand.ts` 的 `PRODUCT_NAME` 注入（`env!("TAVOTTO_PRODUCT_NAME")`）。
 # **已知盲区**：`splash.html` / `error.html`、`main.rs` 的窗口标题与关于面板、
 # `sidecar.rs` 的打包目录名仍是手写的，这两条不扫它们。
 
@@ -319,7 +317,6 @@ def test_shell_text_never_handwrites_the_product_name():
             f"{name} 表里手写了产品名，改成 concat!({_BRAND_ENV}, …)：{handwritten}"
         )
         # 反向：注入的那一处真的在——否则整张表不提产品名也是绿的
-        assert BRAND in parts["remote_window_title"], parts["remote_window_title"]
         assert BRAND in parts["app_quit"], parts["app_quit"]
 
 
@@ -345,16 +342,3 @@ def test_the_injected_brand_is_the_brand_constant():
     (section,) = re.findall(r"^\[project\.scripts\]\n(.*?)(?=^\[)", pyproject, re.M | re.S)
     scripts = re.findall(r"^([\w-]+)\s*=", section, re.M)
     assert brand.DIST_NAME in scripts, scripts
-
-
-def test_connect_page_never_handwrites_the_brand():
-    from tavotto.engine import brand
-
-    html = (TAURI / "shell" / "connect.html").read_text(encoding="utf-8")
-    assert brand.PRODUCT_NAME not in html, "connect.html 手写了产品名，文案里写 {product}"
-    # 命令名按整词找：错误 code `not_tavotto`（与 remote.rs 同源）里的那段不是文案
-    hits = re.findall(rf"(?<![\w-]){re.escape(brand.DIST_NAME)}(?![\w-])", html)
-    assert not hits, "connect.html 手写了命令名 / 包名，文案里写 {dist}"
-    # 反向：页面真的从壳带来的参数取名字，且文案真的用到了占位符
-    assert "q.get('product')" in html and "q.get('dist')" in html
-    assert "{product}" in html and "{dist}" in html

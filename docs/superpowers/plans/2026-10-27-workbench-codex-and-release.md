@@ -16,4 +16,12 @@
 - [x] Update usage documentation for Codex entry points, data sent, cancellation and validation boundaries.
 - [x] Run Ruff before backend tests, targeted frontend tests, full frontend build and translation checks, playground build and both browser workflows. Verify mutation checks and resolve the reviewed cancellation race.
 - [x] Perform one live Codex request on synthetic code and render the generated result. Preserve user configuration; extend local model choices and explain model/CLI mismatch after detecting an older CLI.
-- [ ] Following the user's explicit final-release instruction, commit the four synchronized `1.2.0` versions and release notes, build/verify the signed Windows candidate, inspect actual release assets, and only then publish the single final Release.
+- [x] Following the user's explicit final-release instruction, commit the four synchronized `1.2.0` versions and release notes, build/verify the signed Windows candidate, inspect actual release assets, and only then publish the single final Release.
+
+## Release evidence
+
+- Source: `b55b4daed1b08c17708dc9be61ce9fa5b43dfe07`, tag `v1.2.0`.
+- [Windows workflow](https://github.com/pawafa666-eng/plot-workbench/actions/runs/40508525611): build, tests, installed execution without system Python, signature key matching, frozen dependency/license closure and draft preparation all succeeded.
+- Local checks: Ruff; 198 backend checks and a final 118-test targeted follow-up; 145 frontend checks; both real-browser workflows; translation/type/build/playground checks. A live Codex desktop CLI call modified synthetic code, and its result rendered successfully. Local model cache adds choices without changing user configuration; unsupported model/CLI errors are actionable.
+- Five downloaded assets matched their GitHub SHA-256 digests. Installer checksum, updater-contained installer identity, full Minisign payload/trusted-comment signatures, manifest URLs/signature and release notes were verified before publication.
+- [Published Release](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.2.0): public, stable and latest. The public updater manifest matched verified bytes; the public Windows installer returned HTTP 200.

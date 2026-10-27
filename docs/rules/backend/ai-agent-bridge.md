@@ -105,9 +105,9 @@
   用户在别的终端里跑 claude/codex 必须还是他自己那套）。密钥存用户配置
   （目录权限收到 0700），接口一律只回「有没有 + 尾四位」。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
-  `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端
+  `[profiles.*].model`，并追加同目录 `models_cache.json` 中公开可选的模型，绝不在源码里写模型名**。缓存只提供选择项，不证明所选 CLI／账号可调用；不改变配置的默认模型，也不改写用户配置。OpenAI 换代后旧名会被服务端
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a
-  ChatGPT account.`）；读不到就交白卷，让 CLI 用自己的默认值。强度档位
+  ChatGPT account.`）；配置与缓存都读不到就交白卷，让 CLI 用自己的默认值。强度档位
   minimal/low/medium/high/max 是 CLI 侧开关，与模型清单无关。
   前端 `aiStore.prunePrefs` 在每次探测后丢弃 localStorage 里已失效的选择，
   否则用户会永远卡在一个报错的旧模型上（vitest + pytest 双侧看护）。

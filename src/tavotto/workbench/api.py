@@ -446,6 +446,25 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def open_tavotto(plot_id):
         return jsonify(manager.service.open_session(plot_id, _body().get("stem", "figure")))
 
+    @bp.post("/assistant/runs")
+    def start_assistant():
+        return jsonify(manager.service.start_assistant(_body()))
+
+    @bp.get("/assistant/runs/<task_id>")
+    def poll_assistant(task_id):
+        return jsonify(manager.service.assistant.poll(task_id))
+
+    @bp.post("/assistant/runs/<task_id>/cancel")
+    def cancel_assistant(task_id):
+        manager.service.assistant.cancel(task_id)
+        return jsonify({"ok": True})
+
+    @bp.post("/sessions/<session_id>/assistant/<task_id>/apply")
+    def apply_assistant(session_id, task_id):
+        return jsonify(
+            manager.service.apply_assistant(session_id, task_id, _need(_body(), "patches"))
+        )
+
     @bp.post("/sessions/<session_id>/render")
     def render_session(session_id):
         body = _body()

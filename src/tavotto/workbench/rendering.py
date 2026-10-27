@@ -17,6 +17,7 @@ from pathlib import Path
 from tavotto.engine import atomicio, config, patchspec, pool, runtime, workdir
 
 from . import data as data_module
+from .assistant import AssistantService
 from .store import WorkbenchError, inside, read_json
 
 TIMEOUT = 60
@@ -132,6 +133,8 @@ class RenderService:
         self.jobs = {}
         self.latest = {}
         self.sessions = {}
+        self.assistant = AssistantService(self.root / "assistant")
+        self.closed = False
 
     def render(self, payload, plot_id=None):
         if plot_id:
@@ -474,9 +477,161 @@ def main():
 
     def _session(self, sid):
         session = self.sessions.get(sid)
-        if not session or session["closed"]:
+        if self.closed or not session or session["closed"]:
             raise WorkbenchError("编辑会话已结束，请重新打开 Tavotto", "session_closed", 409)
         return session
+
+    @staticmethod
+    def _assistant_token(session, patches):
+        content = {
+            "base": session["plot"].get("base_code", session["plot"]["code"]),
+            "generation": session.get("code_generation", 0),
+            "revision": session["revision"],
+            "patches": patches,
+        }
+        return hashlib.sha256(
+            json.dumps(content, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+
+    def start_assistant(self, body):
+        sid = body.get("session_id")
+        if sid is None:
+            return self.assistant.start(
+                code=body.get("code"),
+                prompt=body.get("prompt"),
+                schema=body.get("schema"),
+                data_context=body.get("data_context"),
+                model=body.get("model"),
+                effort=body.get("effort"),
+            )
+        if not isinstance(sid, str):
+            raise WorkbenchError("编辑会话标识无效")
+        session = self._session(sid)
+        with session["lock"]:
+            patches = body.get("patches", [])
+            if patches != session["patches"]:
+                raise WorkbenchError(
+                    "图内修改尚未同步，请同步后再使用 Codex", "stale_assistant", 409
+                )
+            return self.assistant.start(
+                code=session["plot"].get("base_code", session["plot"]["code"]),
+                prompt=body.get("prompt"),
+                schema=session["plot"].get("schema"),
+                data_context=session["plot"].get("data"),
+                model=body.get("model"),
+                effort=body.get("effort"),
+                owner=sid,
+                token=self._assistant_token(session, patches),
+                context={"stem": session["stem"], "overrides": patches},
+            )
+
+    @staticmethod
+    def _session_payload(session):
+        response = session["response"]
+        return {
+            "session_id": session["id"],
+            "stem": session["stem"],
+            "script": "adapter.py",
+            "project": session["directory"],
+            "manifest": response["manifest"],
+            "svg": response.get("svg"),
+            "overrides": session["patches"],
+            "preview": response.get("preview"),
+            "renderRevision": response.get("render_revision", 1),
+        }
+
+    @staticmethod
+    def _session_histories(session, patches):
+        plot = session["plot"]
+        histories = {item["stem"]: [] for item in plot.get("outputs", [{"stem": "figure"}])}
+        histories.update(
+            copy.deepcopy(plot.get("output_overrides") or {"figure": plot.get("overrides", [])})
+        )
+        histories[session["stem"]] = copy.deepcopy(patches)
+        return histories
+
+    def apply_assistant(self, sid, task_id, patches):
+        session = self._session(sid)
+        with session["lock"]:
+            self._session(sid)
+            if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
+                raise WorkbenchError("子图已发生变化，请重新打开编辑会话", "stale_session", 409)
+            if patches != session["patches"]:
+                raise WorkbenchError(
+                    "图内编辑已发生变化，请重新让 Codex 修改", "stale_assistant", 409
+                )
+            code = self.assistant.proposal(
+                task_id, owner=sid, token=self._assistant_token(session, patches)
+            )
+            if code == session["plot"].get("base_code", session["plot"]["code"]):
+                return self._session_payload(session)
+            candidate = {**session, "plot": copy.deepcopy(session["plot"])}
+            candidate["plot"]["base_code"] = code
+            directory = Path(session["directory"]).parent / uuid.uuid4().hex
+            candidate["directory"] = str(self._adapter(candidate["plot"], directory))
+            worker = self._session_worker(candidate)
+            candidate["worker"] = worker
+            try:
+                histories = self._session_histories(candidate, patches)
+                built = worker.ensure_built()
+                self._check_assistant_inputs(session, built)
+                if set(built.get("stems", {})) != set(histories):
+                    raise WorkbenchError(
+                        "Codex 改变了出图数量，请保留原有图形后重试",
+                        "assistant_outputs_changed",
+                        409,
+                    )
+                for stem, history in histories.items():
+                    result = worker.override(stem, history, inline_svg=True)
+                    if result.get("warnings"):
+                        raise WorkbenchError(
+                            "Codex 结果无法保留已有图内编辑，未应用", "override_warnings", 409
+                        )
+                self._session_render(candidate, patches)
+                # A root close can start while this lock is held. Never accept
+                # a candidate from that closed service/session generation.
+                self._session(sid)
+            except pool.WorkerError as exc:
+                pool.discard(worker)
+                raise WorkbenchError(
+                    f"Codex 候选代码无法运行，未应用：{exc}", "assistant_render_failed", 409
+                ) from exc
+            except BaseException:
+                pool.discard(worker)
+                raise
+            candidate["code_changed"] = True
+            candidate["code_generation"] = session.get("code_generation", 0) + 1
+            previous_worker = session["worker"]
+            # Queued render/preview requests may already hold this dict and lock.
+            # Keep its identity so they observe the accepted candidate worker.
+            session.update(candidate)
+            pool.discard(previous_worker)
+            return self._session_payload(session)
+
+    def _check_assistant_inputs(self, session, built):
+        # Keep Tavotto's frozen data contract. The worker's Python file observer
+        # covers project files/local modules; its documented blind channels
+        # (native readers, network, databases) are not claimed as covered here.
+        inputs = (built.get("runtime") or {}).get("inputs") or {}
+        allowed = {item["path"] for item in session["plot"].get("input_files", [])}
+        root = self.store.working_directory(session["plot"]["project_id"])
+        # The owned session/artifact directories exist in both storage layouts;
+        # a v1 working directory must never be exempted wholesale.
+        owned = [
+            Path(session["directory"]).parent.resolve(),
+            Path(session["plot"]["_artifact_dir"]).resolve(),
+        ]
+        for item in inputs.get("files", []) + inputs.get("local_modules", []):
+            relative = Path(item["path"])
+            actual = (root / relative).resolve()
+            if any(actual.is_relative_to(directory) for directory in owned):
+                continue
+            if relative.as_posix() not in allowed:
+                raise WorkbenchError(
+                    "Codex 引用了新的项目数据或模块，未应用。图内编辑须沿用已保存的数据；更换数据请新建图。",
+                    "assistant_inputs_changed",
+                    409,
+                )
 
     def _session_render(self, session, patches):
         normalized = (
@@ -496,11 +651,13 @@ def main():
     def session_render(self, sid, patches):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             return self._session_render(session, patches)
 
     def session_preview(self, sid, patches, bucket=1600):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             path = session["worker"].preview_png(
                 session["stem"], patches, max(200, min(int(bucket), 6400)), uuid.uuid4().hex
             )
@@ -511,10 +668,13 @@ def main():
     def finish_session(self, sid, patches):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
                 raise WorkbenchError(
                     "子图已发生变化，当前编辑会话不能覆盖新版本", "stale_session", 409
                 )
+            if session.get("code_changed"):
+                return self._finish_assistant_session(session, patches)
             hot = self._session_render(session, patches)
             directory = Path(session["directory"])
             staged = directory / f"v-{uuid.uuid4().hex[:8]}"
@@ -580,17 +740,78 @@ def main():
                     replay_code,
                     staged,
                     output_overrides=histories,
+                    expected_revision=session["revision"],
                 )
             finally:
                 pool.discard(clean)
             self.cancel_session(sid)
             return plot
 
+    def _finish_assistant_session(self, session, patches):
+        """A changed base must verify/export all figures, including inactive ones."""
+        from tavotto import app as tavotto_app, pdfbackend
+
+        from .store import copy_artifacts
+
+        self._session_render(session, patches)
+        histories = self._session_histories(session, session["patches"])
+        directory = Path(session["directory"])
+        staged = directory / f"v-{uuid.uuid4().hex[:8]}"
+        staged.mkdir()
+        copy_artifacts(session["plot"]["_artifact_dir"], staged, session["plot"].get("outputs", []))
+        clean = self._session_worker(session)
+        try:
+            built = clean.ensure_built()
+            self._check_assistant_inputs(session, built)
+            if set(built.get("stems", {})) != set(histories):
+                raise WorkbenchError("重新绘图的图形集合发生变化，未保存", "replay_divergence", 409)
+            for stem, history in histories.items():
+                hot = session["worker"].override(stem, history, inline_svg=True)
+                replay = clean.override(stem, history, inline_svg=True)
+                if hot.get("warnings") or replay.get("warnings"):
+                    raise WorkbenchError("重新绘图未能完整应用编辑，未保存", "replay_failed", 409)
+                geometry_diffs, _ = tavotto_app._compare_manifests(
+                    hot["manifest"], replay["manifest"]
+                )
+                hot_png = session["worker"].preview_png(stem, history, 1600, f"verify-hot-{stem}")
+                cold_png = clean.preview_png(stem, history, 1600, f"verify-cold-{stem}")
+                pixels = pdfbackend.compare_png(Path(hot_png), Path(cold_png))
+                if geometry_diffs or not _pixels_match(pixels):
+                    raise WorkbenchError(
+                        "重放后的图形与当前编辑不一致，未保存", "replay_divergence", 409
+                    )
+                for fmt in ("png", "svg", "pdf"):
+                    exported = clean.export(stem, history, str(staged / f"{stem}.{fmt}"), fmt, 600)
+                    if exported.get("warnings"):
+                        raise WorkbenchError("导出无法完整应用编辑，未保存", "replay_failed", 409)
+                if stem == "figure":
+                    atomicio.write_json(staged / "manifest.json", replay["manifest"])
+            shutil.copy2(directory / "data_helper.py", staged / "data_helper.py")
+            base_code = session["plot"]["base_code"]
+            replay_code = executable_code(
+                base_code, histories.get("figure", []), output_overrides=histories
+            )
+            plot = self.store.commit_tavotto(
+                session["plot_id"],
+                histories.get("figure", []),
+                replay_code,
+                staged,
+                output_overrides=histories,
+                base_code=base_code,
+                expected_revision=session["revision"],
+            )
+        finally:
+            pool.discard(clean)
+        self.cancel_session(session["id"])
+        return plot
+
     def cancel_session(self, sid):
         session = self.sessions.get(sid)
-        if session and not session["closed"]:
-            session["closed"] = True
-            pool.discard(session["worker"])
+        if session:
+            with session["lock"]:
+                if not session["closed"]:
+                    session["closed"] = True
+                    pool.discard(session["worker"])
 
     def export_code(self, plot_id, directory=None, replace=False):
         # The no-overwrite name allocation and the write form one operation;
@@ -693,6 +914,8 @@ def main():
         }
 
     def close(self):
+        self.closed = True
+        self.assistant.close()
         for job in self.jobs.values():
             job["cancel"].set()
         for sid in list(self.sessions):

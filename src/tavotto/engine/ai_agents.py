@@ -455,7 +455,7 @@ class CodexAgent(AgentDefinition):
             return []
         return [desktop_codex_glob(os.environ.get("LOCALAPPDATA"))]
 
-    # -- codex 的模型清单来自它自己的 config.toml ---------------------------
+    # -- codex 的模型清单来自自己的配置与只读模型缓存 -----------------------
     @staticmethod
     def _home() -> Path:
         """codex 自己的配置目录（CODEX_HOME 是其官方覆盖变量，测试也用它重定向）。"""
@@ -463,12 +463,24 @@ class CodexAgent(AgentDefinition):
 
     @classmethod
     def _config(cls) -> dict:
-        """从 codex 的 config.toml 读模型与默认推理强度。
+        """Read configured defaults and visible choices from Codex's local cache.
 
-        顶层 model 是用户当前在用的，profiles 里的作为备选一并列出。读不到就
-        返回空——前端只显示「跟随 CLI 默认」，绝不给一个我们猜的模型名。
+        顶层 model 是用户当前在用的，profiles 与可见缓存项作为备选一并列出。
+        配置和缓存都读不到时返回空，不猜模型，也不改动用户的默认选择。
         """
-        out: dict = {"models": [], "default_model": None, "default_effort": None}
+        cached = []
+        try:
+            cache = json.loads((cls._home() / "models_cache.json").read_text("utf-8"))
+            for model in cache.get("models", []) if isinstance(cache, dict) else []:
+                if isinstance(model, dict) and model.get("visibility") == "list":
+                    name = model.get("slug")
+                    if isinstance(name, str) and name.strip() and name not in cached:
+                        cached.append(name)
+        except (OSError, ValueError, TypeError):
+            pass
+        # Cache entries are picker choices, not proof that this CLI/account can
+        # call them. Never change the user's configured/default model here.
+        out: dict = {"models": cached, "default_model": None, "default_effort": None}
         try:
             text = (cls._home() / "config.toml").read_text(encoding="utf-8")
         except OSError:
@@ -493,7 +505,7 @@ class CodexAgent(AgentDefinition):
             out["default_model"] = names[0] if names else None
             out["default_effort"] = efforts[0] if efforts else None
         seen: list[str] = []
-        for n in names:
+        for n in [*names, *cached]:
             if isinstance(n, str) and n and n not in seen:
                 seen.append(n)
         out["models"] = seen

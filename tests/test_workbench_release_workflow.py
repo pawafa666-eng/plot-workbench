@@ -6,6 +6,7 @@ the repository does not install PyYAML in its test environment.
 """
 
 import re
+import shlex
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +59,7 @@ def test_signed_release_is_built_only_for_tags_and_missing_keys_fail_closed():
     assert "check_updater_key.py" in signature_check
 
 
-def test_only_the_publish_job_gets_release_write_permission_after_validation():
+def test_only_the_draft_job_gets_release_write_permission_after_validation():
     jobs = _jobs()
     build = jobs["windows-installer"]
     publish = jobs["publish-release"]
@@ -69,16 +70,75 @@ def test_only_the_publish_job_gets_release_write_permission_after_validation():
     assert "make_updater_manifest.py" in manifest
     assert "--require" in manifest
     assert "windows-x86_64" in manifest
-    release = _step(publish, "Publish stable Release")
-    assert "gh release create" in release
-    assert "--draft" in release
-    assert release.index("--draft") < release.index("--published-release")
-    assert "select_workbench_draft.py" in release
-    assert release.index("select_workbench_draft.py") < release.index("--published-release")
-    assert release.index("--published-release") < release.index("-F draft=false")
-    assert "releases/${release_id}" in release
-    assert release.count("--published-release") == 2
-    assert release.index("-F draft=false") < release.rindex("--published-release")
+    assert re.search(r"(?m)^    name: Prepare verified release draft$", publish)
+    release = _step(publish, "Prepare verified release draft")
+    assert publish.index(manifest) < publish.index(release)
+
+
+def test_release_draft_commands_stop_after_validating_uploaded_assets():
+    # Subject: the executable commands in the final release-writing step. This
+    # deliberately supports only simple commands and shell line continuations;
+    # changing that grammar requires reviewing this contract, not a silent pass.
+    release = re.split(r"(?m)(?=^      - )", _jobs()["publish-release"])[-1]
+    run = re.search(r"(?ms)^        run: \|\n((?:          .*\n?)+)\Z", release)
+    assert run, "release draft step must have a simple run block"
+    script = "\n".join(line[10:] for line in run.group(1).splitlines())
+    commands = [shlex.split(line) for line in script.replace("\\\n", "").splitlines()]
+    commands = [command for command in commands if command]
+    assert [command[:2] for command in commands] == [
+        ["gh", "release"],
+        ["gh", "api"],
+        ["python3", "scripts/select_workbench_draft.py"],
+        ["python3", "scripts/make_updater_manifest.py"],
+    ], "release preparation must finish at draft validation, without a publication command"
+    create, metadata, select, validate = commands
+    assert create == [
+        "gh",
+        "release",
+        "create",
+        "$GITHUB_REF_NAME",
+        "release-assets/installer/*",
+        "release-assets/updater/*",
+        "release-assets/latest.json",
+        "--title",
+        "$GITHUB_REF_NAME",
+        "--draft",
+        "--notes-file",
+        "release-notes.md",
+    ]
+    assert metadata == [
+        "gh",
+        "api",
+        "repos/${GITHUB_REPOSITORY}/releases?per_page=100",
+        ">",
+        "release-list.json",
+    ]
+    assert select == [
+        "python3",
+        "scripts/select_workbench_draft.py",
+        "--releases",
+        "release-list.json",
+        "--tag",
+        "$GITHUB_REF_NAME",
+        "--out",
+        "release-metadata.json",
+    ]
+    assert validate == [
+        "python3",
+        "scripts/make_updater_manifest.py",
+        "--artifacts",
+        "release-assets/updater",
+        "--tag",
+        "$GITHUB_REF_NAME",
+        "--require",
+        "windows-x86_64",
+        "--notes-file",
+        "release-notes.md",
+        "--out",
+        "release-assets/latest.json",
+        "--published-release",
+        "release-metadata.json",
+    ]
 
 
 def test_select_draft_accepts_only_one_matching_unpublished_release(tmp_path):

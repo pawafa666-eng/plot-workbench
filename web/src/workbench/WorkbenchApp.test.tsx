@@ -87,13 +87,23 @@ it('creates a project in an existing folder with an optional name', async () => 
   expect(JSON.parse(String(request![1]!.body))).toEqual({ path: 'D:\\研究\\已有数据', name: '' })
 })
 
-it('provides the online template repository from the template library', async () => {
+it('keeps local template upload and creation available without an online template entry', async () => {
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-nav-templates]')!.click())
-  const link = document.querySelector<HTMLAnchorElement>('[data-wb-online-templates]')
-  expect(link?.href).toBe('https://github.com/pawafa666-eng/plot-workbench-templates')
-  // The native navigation guard hands this URL to the system browser.
-  // WebView2 popup links can be blocked before that guard is called.
-  expect(link?.target).toBe('_self')
+  const library = document.querySelector('[data-wb-template-library]')!
+  const upload = library.querySelector<HTMLInputElement>('[data-wb-library-upload]')
+  expect(upload?.type).toBe('file')
+  expect(upload?.accept).toBe('.py')
+  expect(library.querySelector('[data-wb-online-templates]')).toBeNull()
+  expect(library.querySelectorAll('a[href]')).toHaveLength(0)
+  const uploadClick = vi.spyOn(upload!, 'click')
+  const uploadButton = library.querySelector<HTMLButtonElement>('[data-wb-library-upload-trigger]')
+  expect(uploadButton?.disabled).toBe(false)
+  await act(async () => uploadButton!.click())
+  expect(uploadClick).toHaveBeenCalledTimes(1)
+  const create = library.querySelector<HTMLButtonElement>('[data-wb-template-create]')
+  expect(create?.disabled).toBe(false)
+  await act(async () => create!.click())
+  expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
 })
 
 it('uses the native existing-folder picker for project creation', async () => {

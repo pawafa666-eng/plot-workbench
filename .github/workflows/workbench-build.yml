@@ -132,6 +132,7 @@ jobs:
           retention-days: 1
 
   publish-release:
+    name: Prepare verified release draft
     if: startsWith(github.ref, 'refs/tags/v')
     needs: windows-installer
     runs-on: ubuntu-latest
@@ -172,7 +173,7 @@ jobs:
           --require windows-x86_64
           --notes-file release-notes.md
           --out release-assets/latest.json
-      - name: Publish stable Release
+      - name: Prepare verified release draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -184,13 +185,8 @@ jobs:
             --draft \
             --notes-file release-notes.md
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > release-list.json
-          release_id="$(python3 scripts/select_workbench_draft.py --releases release-list.json --tag "$GITHUB_REF_NAME" --out release-metadata.json)"
+          python3 scripts/select_workbench_draft.py --releases release-list.json --tag "$GITHUB_REF_NAME" --out release-metadata.json
           python3 scripts/make_updater_manifest.py \
             --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
             --require windows-x86_64 --notes-file release-notes.md \
             --out release-assets/latest.json --published-release release-metadata.json
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -f make_latest=true > published-release.json
-          python3 scripts/make_updater_manifest.py \
-            --artifacts release-assets/updater --tag "$GITHUB_REF_NAME" \
-            --require windows-x86_64 --notes-file release-notes.md \
-            --out release-assets/latest.json --published-release published-release.json

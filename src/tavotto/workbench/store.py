@@ -461,10 +461,22 @@ class WorkbenchStore:
             return self._commit_plot(plot_id, payload, artifacts)
 
     def commit_tavotto(
-        self, plot_id, patches, replay_code, artifacts=None, *, output_overrides=None
+        self,
+        plot_id,
+        patches,
+        replay_code,
+        artifacts=None,
+        *,
+        output_overrides=None,
+        base_code=None,
+        expected_revision=None,
     ):
         with self.lock:
             old = self.get_plot(plot_id)
+            if expected_revision is not None and old["revision"] != expected_revision:
+                raise WorkbenchError(
+                    "子图已发生变化，本次验证结果不能覆盖新版本", "stale_session", 409
+                )
             source = dict(old.get("source") or {})
             source["kind"] = "external"
             source["via"] = "tavotto"
@@ -472,7 +484,9 @@ class WorkbenchStore:
                 plot_id,
                 {
                     "state": "TAVOTTO_ONLY",
-                    "base_code": old.get("base_code", old["code"]),
+                    "base_code": base_code
+                    if base_code is not None
+                    else old.get("base_code", old["code"]),
                     "code": replay_code,
                     "overrides": patches,
                     "output_overrides": output_overrides or {"figure": patches},

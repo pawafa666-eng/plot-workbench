@@ -876,6 +876,38 @@
         "粘 `http://localhost:5189/…`、一个没人监听的端口、以及 0.17.0 服务器的地址：分别说清「要写 127.0.0.1」「连不上」「服务器上的 Tavotto 太旧」，窗口留在连接页",
         "远程窗口有未保存修改时点红灯：先问再关；主窗口不弹框"
       ]
+    },
+    {
+      "id": "workbench.template-codex",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "模板编辑器中的本地 Codex 助手：查看差异、明确应用、重新验证后保存",
+        "en-US": "Local Codex template assistance with reviewed application and fresh validation before save"
+      },
+      "entry": "模板库 → 创建或编辑模板 → Codex 助手",
+      "e2e": [
+        {
+          "spec": "workbench-codex.spec.ts",
+          "title": "Codex template proposal requires application and fresh validation before save"
+        }
+      ]
+    },
+    {
+      "id": "workbench.tavotto-codex",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑中的本地 Codex 助手：保留已有修改，经完整验证保存并可重新打开",
+        "en-US": "Local Codex figure assistance preserving overrides through verified save and reopen"
+      },
+      "entry": "项目图形 → 使用 Tavotto 继续编辑 → Codex 助手",
+      "e2e": [
+        {
+          "spec": "workbench-codex.spec.ts",
+          "title": "Codex figure proposal preserves overrides through verified save and reopen"
+        }
+      ]
     }
   ]
 }

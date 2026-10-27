@@ -15,7 +15,6 @@ export const UPSTREAM_URL = 'https://github.com/Tavotto/Tavotto'
 
 /** 仓库与发行地址（与 `engine/brand.py` 的 REPO_URL 同源） */
 export const REPO_URL = 'https://github.com/pawafa666-eng/plot-workbench'
-export const TEMPLATE_REPO_URL = 'https://github.com/pawafa666-eng/plot-workbench-templates'
 export const RELEASES_LATEST_URL = `${REPO_URL}/releases/latest`
 /** 隐私说明（设置页「关于与隐私」、首启遥测询问都链到它） */
 export const PRIVACY_DOC_URL = `${REPO_URL}/blob/main/docs/privacy.md`

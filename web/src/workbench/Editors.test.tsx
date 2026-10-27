@@ -2,12 +2,14 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { fetchAiCapabilities, type AiCapabilities } from '@/lib/api'
 import { PlotEditor, TemplateEditor } from './Editors'
 import { download, type Plot } from './api'
 import { DEFAULT_SCHEMA } from './model'
 
 vi.mock('./TavottoEditor', () => ({ TavottoEditor: () => <div data-wb-test-tavotto /> }))
 vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), download: vi.fn(async () => {}) }))
+vi.mock('@/lib/api', async (original) => ({ ...await original<typeof import('@/lib/api')>(), fetchAiCapabilities: vi.fn(async () => ({ agents: [], endpoints: [], presets: [], checked_at_ms: 1 })) }))
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root: Root
@@ -78,6 +80,45 @@ it('retains every output in template previews', async () => {
   await act(async () => root.render(<TooltipProvider><TemplateEditor initial={template} categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-output="figure_2"]')!.click())
   expect(document.querySelector<HTMLImageElement>('[data-wb-preview-image]')?.getAttribute('src')).toBe('/second.png')
+})
+
+it('opens Codex assistance from the template editor without running or saving the template', async () => {
+  await act(async () => root.render(<TooltipProvider><TemplateEditor categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
+  const assistant = document.querySelector<HTMLButtonElement>('[data-wb-template-assistant]')
+  expect(assistant).toBeTruthy()
+  await act(async () => assistant!.click())
+  expect(document.querySelector('[data-dialog="workbench-code-assistant"]')).toBeTruthy()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/templates/validate') || String(url).endsWith('/templates'))).toBe(false)
+})
+
+it('invalidates template validation when the user applies a Codex proposal', async () => {
+  const caps: AiCapabilities = { agents: [{ id: 'codex', display_name: 'Codex', icon_key: 'codex', usable: true, state: 'ready', installed: true, enabled: true, version: null, executable_path: null, path_override: null, detection_source: null, models: [], default_model: null, efforts: [], default_effort: null, endpoint: null, active_endpoint_id: null, diagnostics: { searched: [], broken_path: null, readiness: 'ready', readiness_detail: null }, features: { model_selection: false, effort_selection: false, third_party_endpoints: false, wire_api_selection: false, readiness_probe: true } }], endpoints: [], presets: [], checked_at_ms: 1 }
+  vi.mocked(fetchAiCapabilities).mockResolvedValue(caps)
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input)
+    const body = url.endsWith('/templates/validate') ? { job_id: 'validation' }
+      : url.endsWith('/jobs/validation') ? { id: 'validation', status: 'success', result: { run_id: 'validated', preview_url: '/first.png', outputs } }
+      : url.endsWith('/assistant/runs') && init?.method === 'POST' ? { id: 'assistant-one', status: 'running' }
+      : { id: 'assistant-one', status: 'done', code: 'new template code', changed: true, diff: '+new template code' }
+    return { ok: true, json: async () => body } as Response
+  })
+  await act(async () => root.render(<TooltipProvider><TemplateEditor categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.click())
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-assistant]')!.click())
+  await act(async () => {
+    const prompt = document.querySelector<HTMLInputElement>('[data-wb-assistant-prompt]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(prompt, 'add a legend')
+    prompt.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-start]')!.click())
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-code]')!.value).not.toBe('new template code')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-apply]')!.click())
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-code]')!.value).toBe('new template code')
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.click())
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/templates'))).toBe(false)
 })
 
 it('blocks export, save and Tavotto when edited code no longer matches the saved preview', async () => {

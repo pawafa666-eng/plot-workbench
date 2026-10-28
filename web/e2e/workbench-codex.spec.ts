@@ -5,6 +5,7 @@ import { expect, test } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 const TITLE = 'Codex browser check'
+const REPLY = '已更新图表标题，并保留原有数据与图内修改。你可以继续提出调整要求。'
 const SCHEMA = { rows: { mode: 'variable', min: 1 }, columns: { mode: 'variable', min: 1 } }
 const CODE = `import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3.2, 2.4))
@@ -61,7 +62,7 @@ def _run(*, script, figures_dir, **kwargs):
         "id": sid, "agent": "codex", "status": "done", "changed": True,
         "script_path": str(target),
         "diff": "".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True))),
-        "transcript": [{"kind": "message", "text": "Deterministic browser test proposal ready"}]
+        "transcript": [{"kind": "message", "text": "${REPLY}"}]
     }
     return sid
 
@@ -116,14 +117,37 @@ async function propose(page: Page, entry: string) {
   await expectUsable(page, trigger)
   await expect(trigger).toBeEnabled()
   await trigger.click()
+  const dialog = page.locator('[data-dialog="workbench-code-assistant"]')
+  // Wait for the opening scale animation before measuring the normal width.
+  await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(920, 0)
+  const initialWidth = (await dialog.boundingBox())!.width
+  await page.locator('[data-wb-assistant-expand]').click()
+  await expect.poll(async () => (await dialog.boundingBox())!.width).toBeGreaterThan(initialWidth + 100)
+  await page.locator('[data-wb-assistant-expand]').click()
+  await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(initialWidth, 0)
   const prompt = page.locator('[data-wb-assistant-prompt]')
   await expectUsable(page, prompt)
-  await prompt.fill('Add the title Codex browser check to each figure; preserve all existing data and figures.')
+  await prompt.fill('请为每张图设置标题 Codex browser check，保留原有数据和其他设置。')
   const start = page.locator('[data-wb-assistant-start]')
   await expect(start).toBeEnabled()
   await expectUsable(page, start)
   await start.click()
+  await expect(page.locator('[data-wb-assistant-message="assistant"]').last()).toContainText(REPLY)
+  await page.locator('[data-wb-assistant-diff-toggle]').click()
   await expect(page.locator('[data-wb-assistant-diff]')).toContainText(TITLE)
+  // Continue in the same staged draft before applying it to the real editor.
+  const followup = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/assistant/runs'))
+  await prompt.fill('保留上一轮草稿，请简要解释改动。')
+  await start.click()
+  const body = (await followup).postDataJSON()
+  expect(body.parent_id).toBeTruthy()
+  expect(body.history.map((item: { role: string }) => item.role)).toEqual(['user', 'assistant'])
+  await expect(page.locator('[data-wb-assistant-message="assistant"]')).toHaveCount(2)
+  await expect(page.locator('[data-wb-assistant-apply]')).toBeEnabled()
+  await page.locator('[data-wb-assistant-diff-toggle]').click()
+  await expect(page.locator('[data-wb-assistant-diff]')).toContainText(TITLE)
+  await page.locator('[data-wb-assistant-diff-toggle]').click()
+  await expect(page.locator('[data-wb-assistant-diff]')).toHaveCount(0)
   await expect(page.locator('[data-wb-assistant-apply]')).toBeEnabled()
 }
 

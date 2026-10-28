@@ -503,6 +503,8 @@ def main():
                 data_context=body.get("data_context"),
                 model=body.get("model"),
                 effort=body.get("effort"),
+                history=body.get("history"),
+                parent_id=body.get("parent_id"),
             )
         if not isinstance(sid, str):
             raise WorkbenchError("编辑会话标识无效")
@@ -523,6 +525,8 @@ def main():
                 owner=sid,
                 token=self._assistant_token(session, patches),
                 context={"stem": session["stem"], "overrides": patches},
+                history=body.get("history"),
+                parent_id=body.get("parent_id"),
             )
 
     @staticmethod

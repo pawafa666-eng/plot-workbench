@@ -59,6 +59,26 @@ def test_signed_release_is_built_only_for_tags_and_missing_keys_fail_closed():
     assert "check_updater_key.py" in signature_check
 
 
+def test_windows_release_build_executes_the_codex_transport_regressions():
+    checks = _step(_jobs()["windows-installer"], "Verify backend and fork packaging")
+    command = next(
+        line.strip()
+        for line in checks.splitlines()
+        if line.strip().startswith("python -m pytest -q ")
+    )
+    arguments = shlex.split(command)
+    assert {
+        "tests/test_ai_prompt_transport.py",
+        "tests/test_ai_agents.py",
+        "tests/test_ai_bridge.py",
+        "tests/test_ai_history.py",
+        "tests/test_ai_refresh.py",
+        "tests/test_ai_revert_stale.py",
+        "tests/test_ai_capabilities.py",
+        "tests/test_agents_rules_index.py",
+    } <= set(arguments)
+
+
 def test_only_the_draft_job_gets_release_write_permission_after_validation():
     jobs = _jobs()
     build = jobs["windows-installer"]

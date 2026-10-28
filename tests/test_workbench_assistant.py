@@ -26,6 +26,7 @@ def bridge(monkeypatch):
         sid = f"cli-{len(calls)}"
         calls.append(kwargs)
         path = Path(kwargs["figures_dir"]) / kwargs["script"]
+        kwargs["initial_code"] = path.read_text("utf-8")
         path.write_text(CHANGED, encoding="utf-8")
         sessions[sid] = {
             "status": "done",
@@ -88,6 +89,104 @@ def test_cancelled_failed_and_invalid_results_cannot_be_applied(tmp_path, bridge
     bridge[1]["cli-1"]["status"] = "failed"
     with pytest.raises(WorkbenchError):
         service.proposal(task["id"])
+
+
+def test_chat_history_and_reply_support_followup_on_the_staged_proposal(tmp_path, bridge):
+    service = AssistantService(tmp_path / "assistant")
+    first = service.start(code=ORIGINAL, prompt="修改标题", owner="a", token="v1")
+    followup = service.start(
+        code=ORIGINAL,
+        prompt="保留标题，解释一下",
+        history=[
+            {"role": "user", "text": "修改标题"},
+            {"role": "assistant", "text": "已修改标题。"},
+        ],
+        parent_id=first["id"],
+        owner="a",
+        token="v1",
+    )
+    assert bridge[0][-1]["initial_code"] == CHANGED
+    assert "已修改标题。" in bridge[0][-1]["user_prompt"]
+    result = service.poll(followup["id"])
+    assert result["reply"] == "已修改标题。"
+    assert result["changed"] is True
+    assert "plt.title('Codex proposal')" in result["diff"]
+    assert service.proposal(followup["id"], owner="a", token="v1") == CHANGED
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"owner": "other", "token": "v1"}, {"owner": "a", "token": "v2"}],
+)
+def test_chat_parent_rejects_other_editors_and_stale_context(tmp_path, bridge, changes):
+    service = AssistantService(tmp_path / "assistant")
+    first = service.start(code=ORIGINAL, prompt="修改", owner="a", token="v1")
+    with pytest.raises(WorkbenchError):
+        service.start(code=ORIGINAL, prompt="继续", parent_id=first["id"], **changes)
+    assert len(bridge[0]) == 1
+
+
+def test_chat_parent_rejects_changed_template_source(tmp_path, bridge):
+    service = AssistantService(tmp_path / "assistant")
+    first = service.start(code=ORIGINAL, prompt="修改")
+    with pytest.raises(WorkbenchError):
+        service.start(code=ORIGINAL + "# new edit\n", prompt="继续", parent_id=first["id"])
+    assert len(bridge[0]) == 1
+
+
+def test_chat_parent_rejects_changed_data_structure(tmp_path, bridge):
+    service = AssistantService(tmp_path / "assistant")
+    first = service.start(code=ORIGINAL, prompt="修改", data_context={"columns": ["a"]})
+    with pytest.raises(WorkbenchError):
+        service.start(
+            code=ORIGINAL, prompt="继续", parent_id=first["id"], data_context={"columns": ["b"]}
+        )
+    assert len(bridge[0]) == 1
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        "wrong",
+        [{"role": "system", "text": "bad"}],
+        [{"role": "user", "text": 3}],
+        [{"role": "user", "text": "x"}] * 25,
+        [{"role": "user", "text": "中" * 22000}],
+    ],
+)
+def test_chat_history_is_bounded_and_validated(tmp_path, bridge, history):
+    with pytest.raises(WorkbenchError):
+        AssistantService(tmp_path / "assistant").start(
+            code=ORIGINAL, prompt="继续", history=history
+        )
+    assert not bridge[0]
+
+
+def test_a_normal_chat_reply_can_succeed_without_modifying_code(tmp_path, bridge):
+    service = AssistantService(tmp_path / "assistant")
+    task = service.start(code=ORIGINAL, prompt="你好，先不要修改")
+    call = bridge[0][-1]
+    (Path(call["figures_dir"]) / call["script"]).write_text(ORIGINAL, "utf-8")
+    bridge[1]["cli-0"]["transcript"] = [{"kind": "message", "text": "你好！你想怎样调整这张图？"}]
+    result = service.poll(task["id"])
+    assert result["status"] == "done" and result["changed"] is False
+    assert result["reply"] == "你好！你想怎样调整这张图？"
+    assert result["diff"] == ""
+
+
+def test_classified_dictionary_model_error_keeps_actionable_diagnosis(tmp_path, bridge):
+    service = AssistantService(tmp_path / "assistant")
+    task = service.start(code=ORIGINAL, prompt="修改")
+    bridge[1]["cli-0"].update(
+        status="failed",
+        transcript=[
+            {
+                "kind": "message",
+                "text": "{'type': 'invalid_request_error', 'message': 'unsupported model', 'code': 'model_not_found'}",
+            }
+        ],
+    )
+    assert "CLI" in service.poll(task["id"])["error"]
 
 
 def test_service_owns_tasks_and_rejects_results_from_another_session(tmp_path, bridge):

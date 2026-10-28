@@ -43,6 +43,8 @@ pnpm dlx @tauri-apps/cli@2.11.4 signer generate -w "$env:USERPROFILE\.tauri\plot
 
 ## 经用户决定后准备发行草稿
 
+Windows 构建门禁包括 Codex 长提示词传输、编码 Agent 和对话工作流的回归测试。
+
 早期 `1.0.0` 安装程序未启用更新器，不能在软件内自查。请先从 Releases 手动下载带更新器的稳定安装包并覆盖安装一次，之后即可在软件内更新。每次发布新版本时，将以下版本保持一致：
 
 - `src/tavotto/engine/brand.py` 的 `WORKBENCH_VERSION`

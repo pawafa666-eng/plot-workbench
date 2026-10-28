@@ -55,7 +55,7 @@ jobs:
           cargo test --manifest-path workerd/Cargo.toml
           $workbenchTests = @(Get-ChildItem tests/test_workbench*.py -File | ForEach-Object FullName)
           if ($workbenchTests.Count -eq 0) { throw "Workbench backend tests were not found" }
-          python -m pytest -q $workbenchTests tests/test_updater_manifest.py
+          python -m pytest -q $workbenchTests tests/test_updater_manifest.py tests/test_ai_prompt_transport.py tests/test_ai_agents.py tests/test_ai_bridge.py tests/test_ai_history.py tests/test_ai_refresh.py tests/test_ai_revert_stale.py tests/test_ai_capabilities.py tests/test_agents_rules_index.py
           if ($LASTEXITCODE -ne 0) { throw "Workbench backend tests failed" }
           pnpm --dir web exec vitest run src/workbench src/components/settings/updateStates.test.tsx src/store/updateStore.test.ts src/lib/desktop.golden.test.ts src/hooks/menuActions.test.tsx
           if ($LASTEXITCODE -ne 0) { throw "Workbench frontend tests failed" }
@@ -63,6 +63,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Workbench lint failed" }
           python -m ruff check scripts/select_workbench_draft.py
           if ($LASTEXITCODE -ne 0) { throw "Release metadata lint failed" }
+          python -m ruff check src/tavotto/engine/ai_agents.py src/tavotto/engine/ai_bridge.py tests/test_ai_prompt_transport.py tests/test_ai_history.py
+          if ($LASTEXITCODE -ne 0) { throw "Codex transport lint failed" }
           pnpm --dir web lint
           if ($LASTEXITCODE -ne 0) { throw "Frontend lint failed" }
       - name: Build Windows installer

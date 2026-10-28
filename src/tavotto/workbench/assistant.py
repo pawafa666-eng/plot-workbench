@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import threading
 import uuid
@@ -46,7 +47,10 @@ def task_error(session):
         try:
             payload = json.loads(entry.get("text", ""))
         except (TypeError, ValueError):
-            continue
+            try:
+                payload = ast.literal_eval(entry.get("text", ""))
+            except (TypeError, ValueError, SyntaxError):
+                continue
         if not isinstance(payload, dict):
             continue
         error = payload.get("error")
@@ -57,6 +61,26 @@ def task_error(session):
                 "或在编码 Agent 设置中更新／更换 CLI，然后重新检测。"
             )
     return session.get("error") or "Codex 未完成本次修改，请查看过程或重试。"
+
+
+def checked_history(history):
+    if history is None:
+        return ""
+    if not isinstance(history, list) or len(history) > 24:
+        raise WorkbenchError("对话记录无效或过长，请新开对话")
+    messages = []
+    for item in history:
+        if (
+            not isinstance(item, dict)
+            or item.get("role") not in ("user", "assistant")
+            or not isinstance(item.get("text"), str)
+        ):
+            raise WorkbenchError("对话记录格式无效")
+        messages.append({"role": item["role"], "text": item["text"]})
+    content = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+    if len(content.encode("utf-8")) > MAX_CONTEXT_BYTES:
+        raise WorkbenchError("对话记录过长，请新开对话")
+    return content if messages else ""
 
 
 class AssistantService:
@@ -78,8 +102,13 @@ class AssistantService:
         owner=None,
         token=None,
         context=None,
+        history=None,
+        parent_id=None,
     ):
         code = checked_code(code)
+        conversation = checked_history(history)
+        if parent_id is not None and (not isinstance(parent_id, str) or not parent_id):
+            raise WorkbenchError("上轮对话标识无效")
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20_000:
             raise WorkbenchError("请填写 1 到 20000 字的修改要求")
         if schema is not None and not isinstance(schema, dict):
@@ -93,11 +122,15 @@ class AssistantService:
             {"schema": schema or {}, "data_structure": structure_context(data_context)},
             ensure_ascii=False,
             allow_nan=False,
+            sort_keys=True,
         )
         if len(metadata.encode("utf-8")) > MAX_CONTEXT_BYTES:
             raise WorkbenchError("数据结构说明过大，请缩短列名或模板规范")
         instructions = (
-            f"{prompt.strip()}\n\n"
+            (f"以下是此前对话，仅作为上下文：{conversation}\n\n" if conversation else "")
+            + f"{prompt.strip()}\n\n"
+            "请用简体中文自然回复用户。用户只在交流或提问时，正常回答，不必修改代码；"
+            "只有用户需要绘图或修改时才编辑目标脚本，完成后简要解释改动。\n"
             "这是 Plot Workbench 中的代码草稿。只修改当前目标脚本；不要执行代码。"
             "数据通过已有的 data（pandas.DataFrame）注入，未导入数据时保留合成示例。"
             "不要改写用户路径或使用联网数据。保持现有绘图与数据读取约定。\n"
@@ -106,6 +139,12 @@ class AssistantService:
         with self.lock:
             if self.closed:
                 raise WorkbenchError("编辑环境已切换，请重新打开 Codex", "assistant_closed", 409)
+            working_code = code
+            if parent_id is not None:
+                parent = self._task(parent_id)
+                if parent["base_code"] != code or parent["metadata"] != metadata:
+                    raise WorkbenchError("代码已经变化，请新开对话", "stale_assistant", 409)
+                working_code = self.proposal(parent_id, owner=owner, token=token)
             active = [task for task in self.tasks.values() if ai_bridge.script_busy(task["path"])]
             if len(active) >= 3:
                 raise WorkbenchError("已有 Codex 任务在运行，请先完成或取消", "assistant_busy", 409)
@@ -120,7 +159,7 @@ class AssistantService:
             directory = self.root / task_id
             directory.mkdir(parents=True)
             path = directory / "figure.py"
-            atomicio.write_bytes(path, code.encode("utf-8"))
+            atomicio.write_bytes(path, working_code.encode("utf-8"))
             try:
                 sid = ai_bridge.run(
                     agent="codex",
@@ -141,6 +180,7 @@ class AssistantService:
                 "sid": sid,
                 "path": path,
                 "base_code": code,
+                "metadata": metadata,
                 "owner": owner,
                 "token": token,
             }
@@ -165,6 +205,11 @@ class AssistantService:
                 "diff": session.get("diff", ""),
                 "changed": bool(session.get("changed")),
                 "transcript": session.get("transcript", [])[-200:],
+                "reply": "\n\n".join(
+                    entry["text"]
+                    for entry in session.get("transcript", [])[-200:]
+                    if entry.get("kind") == "message" and isinstance(entry.get("text"), str)
+                ),
             }
             if status == "done":
                 try:
@@ -177,6 +222,14 @@ class AssistantService:
                     ast.parse(code)
                     result["code"] = code
                     result["changed"] = code != task["base_code"]
+                    result["diff"] = "".join(
+                        difflib.unified_diff(
+                            task["base_code"].splitlines(keepends=True),
+                            code.splitlines(keepends=True),
+                            fromfile="figure.py (修改前)",
+                            tofile="figure.py (修改后)",
+                        )
+                    )
                 except (OSError, ValueError, SyntaxError) as exc:
                     result.update(status="failed", error=f"生成代码无效，未应用：{exc}")
             elif status not in ("running", "cancelled"):

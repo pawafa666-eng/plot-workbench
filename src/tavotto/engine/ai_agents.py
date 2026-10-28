@@ -121,10 +121,16 @@ class RunContext:
 
 @dataclass(frozen=True)
 class SpawnSpec:
-    """→ (完整命令行, 需要追加到环境的变量)。"""
+    """可解包为 (命令行, 环境变量)，并可声明独立有限输入。"""
 
     argv: list[str]
     env: dict[str, str] = field(default_factory=dict)
+    stdin_text: str | None = None
+
+    def __iter__(self):
+        # Retain the bridge's historical (argv, env) unpacking contract.
+        yield list(self.argv)
+        yield dict(self.env)
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +564,8 @@ class CodexAgent(AgentDefinition):
             cmd += ["-m", ctx.model]
         if ctx.effort:
             cmd += ["-c", f"model_reasoning_effort={ctx.effort}"]
-        return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
+        # The bridge supplies a finite UTF-8 document, never the parent's stdin.
+        return SpawnSpec(cmd + ["-"], dict(ctx.endpoint_env), stdin_text=ctx.prompt)
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:

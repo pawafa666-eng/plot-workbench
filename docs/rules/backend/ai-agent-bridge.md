@@ -1,5 +1,7 @@
 # 编码 Agent 桥
 
+2026-10-28：Codex 的完整提示词通过 `SpawnSpec.stdin_text` 声明，由桥写入数据缓存目录内的临时 UTF-8 文件，以有限 stdin 交给 `codex exec -`；不进入 Windows 的命令行长度预算。子进程只拿到这份独立文件及 EOF，绝不继承桌面 sidecar 的父进程死亡管道，也不增加交互输入能力。其他适配器未声明此字段时仍使用 DEVNULL，探测／登录状态检查继续一律 DEVNULL。旧的 `(argv, env)` 解包保持兼容。看护：`tests/test_ai_prompt_transport.py`。
+
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 

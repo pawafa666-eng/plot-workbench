@@ -2653,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "plot-workbench-desktop"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "objc2",
  "percent-encoding",

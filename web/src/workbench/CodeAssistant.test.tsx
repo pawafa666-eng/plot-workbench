@@ -33,13 +33,18 @@ async function render(overrides: Partial<React.ComponentProps<typeof CodeAssista
   await act(async () => root.render(<TooltipProvider><CodeAssistant code="old code" data={data} schema={DEFAULT_SCHEMA} contextKey="template-one" onApply={onApply} onClose={onClose} {...overrides} /></TooltipProvider>))
 }
 async function request() {
-  await act(async () => {
-    const prompt = document.querySelector<HTMLInputElement>('[data-wb-assistant-prompt]')!
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(prompt, 'add error bars')
-    prompt.dispatchEvent(new Event('input', { bubbles: true }))
-  })
+  await typePrompt('add error bars')
   await act(async () => button('start').click())
 }
+async function typePrompt(value: string) {
+  await act(async () => {
+    const prompt = document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!
+    const prototype = prompt.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(prompt, value)
+    prompt.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+async function expandDiff() { await act(async () => button('diff-toggle').click()) }
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks()
   useAiStore.setState({ models: {}, efforts: {} })
@@ -60,9 +65,11 @@ it('sends structural data only, shows live output and requires explicit applicat
   await request()
   const requestBody = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))
   expect(requestBody).toEqual({ code: 'old code', prompt: 'add error bars', schema: DEFAULT_SCHEMA, data_context: { row_count: 1, column_count: 2, columns: data.columns, dtypes: data.dtypes } })
-  expect(document.querySelector('[data-wb-assistant-transcript]')?.textContent).toBe('working')
+  expect(document.querySelector('[data-wb-assistant-status]')?.textContent).toContain('正在')
   expect(button('apply').disabled).toBe(true)
   await act(async () => vi.advanceTimersByTimeAsync(650))
+  expect(document.querySelector('[data-wb-assistant-diff]')).toBeNull()
+  await expandDiff()
   expect(document.querySelector('[data-wb-assistant-diff]')?.textContent).toBe(generated.diff)
   expect(onApply).not.toHaveBeenCalled()
   await act(async () => button('apply').click())
@@ -129,6 +136,7 @@ it('keeps the proposal open when staged application fails', async () => {
   await render(); await request()
   await act(async () => button('apply').click())
   expect(document.querySelector('[data-wb-assistant-error]')?.textContent).toContain('candidate verification failed')
+  await expandDiff()
   expect(document.querySelector('[data-wb-assistant-diff]')?.textContent).toBe(generated.diff)
   expect(onClose).not.toHaveBeenCalled()
 })
@@ -168,4 +176,138 @@ it('blocks dismissal while the explicit apply operation is pending', async () =>
   expect(onClose).not.toHaveBeenCalled()
   await act(async () => applied.resolve())
   expect(onClose).toHaveBeenCalledOnce()
+})
+
+it('keeps a readable conversation and sends completed history with the last successful proposal', async () => {
+  let task = 0
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST'
+    ? { id: `task-${++task}`, status: 'running' }
+    : { ...generated, id: `task-${task}`, reply: task === 1 ? '已加入误差棒。' : '已统一字体。', transcript: [{ kind: 'log', text: '{"type":"command_output","text":"raw CLI"}' }] }))
+  await render(); await request()
+  expect(document.querySelector('[data-wb-assistant-prompt]')?.tagName).toBe('TEXTAREA')
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).toContain('已加入误差棒。')
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).not.toContain('raw CLI')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('')
+  await typePrompt('统一字体')
+  await act(async () => button('start').click())
+  const requests = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST' && String(init.body).includes('prompt'))
+  const payload = JSON.parse(String(requests[1][1]?.body))
+  expect(payload).toMatchObject({ code: 'old code', prompt: '统一字体', parent_id: 'task-1', history: [{ role: 'user', text: 'add error bars' }, { role: 'assistant', text: '已加入误差棒。' }] })
+  expect(document.querySelectorAll('[data-wb-assistant-message="user"]')).toHaveLength(2)
+  expect(document.querySelectorAll('[data-wb-assistant-message="assistant"]')).toHaveLength(2)
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).toContain('已统一字体。')
+})
+
+it('sends with Enter but preserves Shift+Enter and IME composition for multiline input', async () => {
+  await render(); await typePrompt('增加误差棒\n保留颜色')
+  const prompt = document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!
+  await act(async () => {
+    prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }))
+    prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }))
+    prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true, cancelable: true }))
+  })
+  expect(fetch).not.toHaveBeenCalled()
+  await act(async () => prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })))
+  expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).prompt).toBe('增加误差棒\n保留颜色')
+})
+
+it('allows a normal reply without code changes and keeps Apply disabled', async () => {
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST' ? { id: 'hello', status: 'running' } : { ...generated, id: 'hello', changed: false, diff: '', code: 'old code', reply: '你好，可以告诉我你想怎样调整图形。' }))
+  await render(); await request()
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).toContain('你好，可以告诉我你想怎样调整图形。')
+  expect(button('apply').disabled).toBe(true)
+  expect(document.querySelector('[data-wb-assistant-error]')).toBeNull()
+})
+
+it('retains the successful proposal, conversation and input when a follow-up fails, then retries that turn', async () => {
+  let task = 0
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST'
+    ? { id: `task-${++task}`, status: 'running' }
+    : task === 2 ? { ...generated, id: 'task-2', status: 'failed', changed: false, error: '模型暂时不可用' } : { ...generated, id: `task-${task}`, reply: task === 1 ? '已加入误差棒。' : '字体已调整。' }))
+  await render(); await request(); await typePrompt('统一字体')
+  await act(async () => button('start').click())
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('统一字体')
+  expect(document.querySelectorAll('[data-wb-assistant-message="user"]')).toHaveLength(2)
+  expect(button('apply').disabled).toBe(false)
+  await act(async () => button('retry').click())
+  const requests = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST' && String(init.body).includes('prompt'))
+  const payload = JSON.parse(String(requests[2][1]?.body))
+  expect(payload.history).toEqual([{ role: 'user', text: 'add error bars' }, { role: 'assistant', text: '已加入误差棒。' }])
+  expect(payload.parent_id).toBe('task-1')
+  expect(document.querySelectorAll('[data-wb-assistant-message="user"]')).toHaveLength(2)
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).toContain('字体已调整。')
+})
+
+it('disables the retained proposal during a follow-up and restores it after cancellation', async () => {
+  const progress = deferred<Response>()
+  let task = 0
+  vi.mocked(fetch).mockImplementation((_input, init) => init?.method === 'POST' ? Promise.resolve(json({ id: `task-${++task}`, status: 'running' })) : task === 1 ? Promise.resolve(json(generated)) : progress.promise)
+  await render(); await request(); await typePrompt('统一字体')
+  await act(async () => button('start').click())
+  expect(button('apply').disabled).toBe(true)
+  await act(async () => button('cancel').click())
+  expect(button('apply').disabled).toBe(false)
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('统一字体')
+  await act(async () => progress.resolve(json({ ...generated, code: 'late code' })))
+  await act(async () => button('apply').click())
+  expect(onApply).toHaveBeenCalledWith(generated)
+})
+
+it('cancels an active task immediately when the dialog is closed', async () => {
+  const progress = deferred<Response>()
+  vi.mocked(fetch).mockImplementation((_input, init) => init?.method === 'POST' ? Promise.resolve(json({ id: 'task-one', status: 'running' })) : progress.promise)
+  await render(); await request()
+  await act(async () => button('close').click())
+  expect(onClose).toHaveBeenCalledOnce()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/task-one/cancel'))).toBe(true)
+  await act(async () => progress.resolve(json(generated)))
+  expect(button('apply').disabled).toBe(true)
+})
+
+it('starts a fresh context after source changes without reusing the old proposal or history', async () => {
+  await render(); await request()
+  await render({ code: 'manually changed code' })
+  expect(button('apply').disabled).toBe(true)
+  await typePrompt('调整字号')
+  await act(async () => button('start').click())
+  const requests = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST' && String(init.body).includes('prompt'))
+  const payload = JSON.parse(String(requests[1][1]?.body))
+  expect(payload.code).toBe('manually changed code')
+  expect(payload.parent_id).toBeUndefined()
+  expect(payload.history ?? []).toEqual([])
+})
+
+it('expands and restores the centered chat dialog', async () => {
+  await render()
+  const dialog = document.querySelector<HTMLElement>('[data-dialog="workbench-code-assistant"]')!
+  expect(dialog.style.width).toBe('920px')
+  await act(async () => button('expand').click())
+  expect(dialog.style.width).toBe('1280px')
+  await act(async () => button('expand').click())
+  expect(dialog.style.width).toBe('920px')
+})
+
+it('bounds follow-up history to the latest twelve complete conversation pairs', async () => {
+  let task = 0
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST' ? { id: `task-${++task}`, status: 'running' } : { ...generated, id: `task-${task}`, reply: `reply ${task}` }))
+  await render()
+  for (let index = 1; index <= 14; index++) {
+    await typePrompt(`request ${index}`)
+    await act(async () => button('start').click())
+  }
+  const requests = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST' && String(init.body).includes('prompt'))
+  const payload = JSON.parse(String(requests[13][1]?.body))
+  expect(payload.history).toHaveLength(24)
+  expect(payload.history[0]).toEqual({ role: 'user', text: 'request 2' })
+  expect(payload.history[23]).toEqual({ role: 'assistant', text: 'reply 13' })
+  expect(document.querySelectorAll('[data-wb-assistant-message="user"]')).toHaveLength(14)
+})
+
+it('does not submit an oversized UTF-8 conversation pair and explains how to restart', async () => {
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST' ? { id: 'task-one', status: 'running' } : { ...generated, reply: '字'.repeat(22000) }))
+  await render(); await request(); await typePrompt('继续')
+  await act(async () => button('start').click())
+  expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  expect(document.querySelector('[data-wb-assistant-error]')?.textContent).toContain('重新打开')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('继续')
 })

@@ -205,10 +205,11 @@ def _install_registry(monkeypatch):
 
 def test_cmd_passes_model_and_effort(monkeypatch):
     _install_registry(monkeypatch)
-    cmd, env = ai_bridge._cmd("codex", "p", "/cwd", model="gpt-5", effort="high")
+    spawn = ai_bridge._cmd("codex", "p", "/cwd", model="gpt-5", effort="high")
+    cmd, env = spawn
     assert "-m" in cmd and "gpt-5" in cmd
     assert "-c" in cmd and "model_reasoning_effort=high" in cmd
-    assert cmd[-1] == "p"  # prompt 恒在末位
+    assert cmd[-1] == "-" and spawn.stdin_text == "p"
     assert env == {}  # 没选第三方接口就不注入任何环境变量
     cmd, _ = ai_bridge._cmd("claude", "p", "/cwd", model="opus")
     assert "--model" in cmd and "opus" in cmd
@@ -217,15 +218,17 @@ def test_cmd_passes_model_and_effort(monkeypatch):
     assert "-m" not in cmd
 
 
-def test_cmd_is_equivalent_to_the_pre_registry_shape(monkeypatch):
-    """重构前后**逐字**等价的看护。
+def test_cmd_preserves_registry_flags_and_declares_finite_prompt_input(monkeypatch):
+    """保留全部运行参数，Codex 提示词有意改为独立有限输入。
 
     Adapter 化最容易悄悄改掉的就是这串固定参数（少一个
     `--skip-git-repo-check`，任务在非 git 目录里就直接失败）。这里把两家的
     完整命令行写死，改动必须是有意的。
     """
     _install_registry(monkeypatch)
-    cmd, _ = ai_bridge._cmd("codex", "PROMPT", "/figs")
+    spawn = ai_bridge._cmd("codex", "PROMPT", "/figs")
+    cmd, _ = spawn
+    assert spawn.stdin_text == "PROMPT"
     assert cmd == [
         "/fake/codex",
         "exec",
@@ -235,7 +238,7 @@ def test_cmd_is_equivalent_to_the_pre_registry_shape(monkeypatch):
         "--sandbox",
         "workspace-write",
         "--skip-git-repo-check",
-        "PROMPT",
+        "-",
     ]
     cmd, _ = ai_bridge._cmd("claude", "PROMPT", "/figs")
     assert cmd == [

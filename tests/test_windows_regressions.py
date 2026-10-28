@@ -47,6 +47,17 @@ from tavotto.engine import (
 )
 
 
+def test_codex_long_conversation_works_from_a_unicode_windows_path(tmp_path, monkeypatch):
+    """A real child gets the long UTF-8 prompt without overflowing Windows argv."""
+    from tests.test_ai_prompt_transport import (
+        test_finite_prompt_stdin_reaches_a_real_child_without_inheriting_parent_input,
+    )
+
+    test_finite_prompt_stdin_reaches_a_real_child_without_inheriting_parent_input(
+        tmp_path, monkeypatch
+    )
+
+
 @pytest.fixture
 def client():
     m.app.config["TESTING"] = True

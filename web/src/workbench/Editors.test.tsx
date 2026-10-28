@@ -107,8 +107,8 @@ it('invalidates template validation when the user applies a Codex proposal', asy
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-assistant]')!.click())
   await act(async () => {
-    const prompt = document.querySelector<HTMLInputElement>('[data-wb-assistant-prompt]')!
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(prompt, 'add a legend')
+    const prompt = document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(prompt, 'add a legend')
     prompt.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-start]')!.click())

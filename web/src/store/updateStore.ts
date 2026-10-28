@@ -205,7 +205,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
       set({
-        desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
+        desktopError:
+          e instanceof Error
+            ? e.message
+            : typeof e === 'string' && e.trim()
+              ? e
+              : t('update.desktopCheckFailed', { ns: 'errors' }),
       })
     } finally {
       set({ desktopPhase: 'idle' })
@@ -234,7 +239,11 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         desktopPhase: 'idle',
         desktopProgress: null,
         desktopError:
-          e instanceof Error ? e.message : t('update.desktopInstallFailed', { ns: 'errors' }),
+          e instanceof Error
+            ? e.message
+            : typeof e === 'string' && e.trim()
+              ? e
+              : t('update.desktopInstallFailed', { ns: 'errors' }),
       })
     }
   },

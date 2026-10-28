@@ -20,7 +20,7 @@ vi.mock('@/lib/desktop', () => ({
   relaunchDesktop: vi.fn(),
 }))
 
-import { checkDesktopUpdate } from '@/lib/desktop'
+import { checkDesktopUpdate, installDesktopUpdate } from '@/lib/desktop'
 import { useUpdateStore } from './updateStore'
 
 const reset = () =>
@@ -41,6 +41,7 @@ beforeEach(() => {
   reset()
   vi.unstubAllGlobals()
   vi.mocked(checkDesktopUpdate).mockReset()
+  vi.mocked(installDesktopUpdate).mockReset()
 })
 
 describe('apply() 的结局', () => {
@@ -144,6 +145,27 @@ describe('apply() 的结局', () => {
 })
 
 describe('桌面检查的时刻', () => {
+  it('保留原生 IPC 返回的字符串错误，不能把连接原因丢掉', async () => {
+    const detail = 'error sending request: proxy connection refused'
+    vi.mocked(checkDesktopUpdate).mockRejectedValue(detail)
+    await useUpdateStore.getState().checkDesktop()
+    const state = useUpdateStore.getState()
+    expect(state.desktopError).toBe(detail)
+    expect(state.desktopCheckedAtMs).toBeNull()
+    expect(state.desktopPhase).toBe('idle')
+  })
+
+  it('下载失败也保留原生错误，恢复按钮且不标为已安装', async () => {
+    const detail = 'error downloading update: connection timed out'
+    useUpdateStore.setState({ desktopUpdate: { version: '1.2.0' } })
+    vi.mocked(installDesktopUpdate).mockRejectedValue(detail)
+    await useUpdateStore.getState().installDesktop()
+    const state = useUpdateStore.getState()
+    expect(state.desktopError).toBe(detail)
+    expect(state.desktopPhase).toBe('idle')
+    expect(state.desktopProgress).toBeNull()
+  })
+
   it('查成功才记时刻', async () => {
     vi.mocked(checkDesktopUpdate).mockResolvedValue(null)
     await useUpdateStore.getState().checkDesktop()

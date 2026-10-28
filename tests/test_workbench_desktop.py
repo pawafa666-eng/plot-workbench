@@ -11,6 +11,7 @@ import shlex
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from tests.support.rustsrc import (
     handler_commands,
@@ -36,6 +37,22 @@ SHORTCUT_ICON = "$INSTDIR\\workbench.ico"
 
 def _config():
     return json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
+
+
+def test_updater_http_client_enables_windows_system_proxy():
+    # Subject: the desktop shell's resolved HTTP-client family, not the WebView
+    # or Python sidecar. Updater 2.10.1 disables reqwest defaults, including
+    # system-proxy, so an explicit shared dependency must restore that feature.
+    manifest = tomllib.loads((TAURI / "Cargo.toml").read_text(encoding="utf-8"))
+    http = manifest["dependencies"].get("reqwest", {})
+    assert "system-proxy" in http.get("features", []), "Updater must read Windows proxy settings"
+    assert http["version"] == "0.13"
+    assert http["default-features"] is False
+    packages = tomllib.loads((TAURI / "Cargo.lock").read_text(encoding="utf-8"))["package"]
+    clients = [package for package in packages if package["name"] == "reqwest"]
+    assert len(clients) == 1 and clients[0]["version"].startswith("0.13.")
+    updater = next(package for package in packages if package["name"] == "tauri-plugin-updater")
+    assert "reqwest" in updater["dependencies"], "Shell and updater must share the HTTP client"
 
 
 def _nsis_body(name):

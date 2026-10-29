@@ -47,6 +47,17 @@ from tavotto.engine import (
 )
 
 
+def test_codex_long_conversation_works_from_a_unicode_windows_path(tmp_path, monkeypatch):
+    """A real child gets the long UTF-8 prompt without overflowing Windows argv."""
+    from tests.test_ai_prompt_transport import (
+        test_finite_prompt_stdin_reaches_a_real_child_without_inheriting_parent_input,
+    )
+
+    test_finite_prompt_stdin_reaches_a_real_child_without_inheriting_parent_input(
+        tmp_path, monkeypatch
+    )
+
+
 @pytest.fixture
 def client():
     m.app.config["TESTING"] = True
@@ -3612,3 +3623,71 @@ def test_no_unguarded_os_kill_zero():
     # 正面形式：扫描真的看见了已知的正确写法——rglob 坏了 / 识别器全失灵时这里先红，而不是一片空绿
     assert any(g.startswith("tests/support/procprobe.py:") for g in guarded), guarded
     assert not unparsable, f"这些文件解析不了，判据看不见它们：{unparsable}"
+
+
+def test_desktop_smoke_preserves_failed_startup_logs(tmp_path):
+    """A failed sidecar launch must retain the output needed to diagnose it."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    diagnostics = tmp_path / "diagnostics"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "smoke_desktop.py"),
+            "--sidecar",
+            sys.executable,
+            "--diagnostics",
+            str(diagnostics),
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    output = (diagnostics / "sidecar.log").read_text("utf-8", errors="replace")
+    assert "--desktop-sidecar" in output
+
+
+def test_workbench_schema_checks_tagged_cells_without_parent_pandas(monkeypatch):
+    """The frozen Flask parent excludes pandas; tagged cells must remain checkable."""
+    import builtins
+
+    from tavotto.workbench.data import validate_schema
+    from tavotto.workbench.examples import EXAMPLES, example_snapshot
+
+    original_import = builtins.__import__
+
+    def without_pandas(name, *args, **kwargs):
+        if name.split(".")[0] in {"pandas", "numpy"}:
+            raise ModuleNotFoundError(f"parent must not import {name}")
+        return original_import(name, *args, **kwargs)
+
+    snapshot = example_snapshot(EXAMPLES[1])
+    snapshot["values"][0][1] = {"$type": "integer", "value": "2"}
+    monkeypatch.setattr(builtins, "__import__", without_pandas)
+    assert validate_schema(snapshot, EXAMPLES[1]["schema"]) == []
+    snapshot["values"][0][1] = {"$type": "timestamp", "value": "2026-10-23"}
+    assert validate_schema(snapshot, EXAMPLES[1]["schema"])[0]["code"] == "dtype_mismatch"
+
+
+def test_frozen_worker_runtime_files_stay_data_below_runtime(tmp_path):
+    """A second Python distribution must not contribute DLLs to the parent root."""
+    from freeze_runtime import runtime_data_toc
+
+    runtime = tmp_path / "runtime"
+    (runtime / "Lib").mkdir(parents=True)
+    files = {
+        "libssl-3.dll": b"worker ssl",
+        "_ssl.pyd": b"worker ssl extension",
+        "Lib/data.py": b"data",
+    }
+    for relative, payload in files.items():
+        (runtime / relative).write_bytes(payload)
+    toc = runtime_data_toc(runtime)
+    assert len(toc) == len(files)
+    for destination, source, kind in toc:
+        relative = Path(destination).relative_to("runtime").as_posix()
+        assert kind == "DATA"
+        assert Path(source).read_bytes() == files[relative]

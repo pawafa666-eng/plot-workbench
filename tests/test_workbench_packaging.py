@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from tavotto.engine import brand, config
 
@@ -24,10 +25,95 @@ def desktop_config():
 def test_actual_desktop_config_is_an_independent_fork():
     conf = desktop_config()
     builder.validate_packaging(conf)
+    assert conf["plugins"]["updater"] == {"endpoints": [], "pubkey": ""}
     assert conf["productName"] == brand.PRODUCT_NAME == "Plot Workbench"
     assert conf["mainBinaryName"] == "PlotWorkbench"
     assert brand.REPO_URL == "https://github.com/pawafa666-eng/plot-workbench"
     assert brand.PACKAGE_EXT == ".tavotto"
+
+
+def test_user_facing_workbench_and_desktop_metadata_share_the_release_version(
+    tmp_path, monkeypatch
+):
+    from tavotto import app as application
+    from tavotto.workbench.api import WorkbenchManager
+
+    manager = WorkbenchManager(tmp_path / "data")
+    assert manager.status()["version"] == brand.WORKBENCH_VERSION
+    monkeypatch.setitem(application.app.config, "TAVOTTO_DESKTOP_MODE", True)
+    with application.app.test_request_context():
+        assert (
+            application._updater_disabled_in_desktop().get_json()["current"]
+            == brand.WORKBENCH_VERSION
+        )
+        assert application.api_version().get_json()["app_version"] == brand.WORKBENCH_VERSION
+
+
+def test_release_overlay_embeds_the_fork_endpoint_and_public_key():
+    overlay = builder.updater_overlay("minisign-public-key")
+    assert overlay == {
+        "bundle": {"createUpdaterArtifacts": "v1Compatible"},
+        "plugins": {
+            "updater": {
+                "endpoints": [
+                    f"{brand.REPO_URL}/releases/latest/download/latest.json",
+                ],
+                "pubkey": "minisign-public-key",
+            }
+        },
+    }
+    release_conf = builder.merge_config(desktop_config(), overlay)
+    builder.validate_packaging(release_conf, updater_enabled=True)
+
+
+def test_release_packaging_rejects_an_upstream_or_foreign_endpoint():
+    release_conf = builder.merge_config(
+        desktop_config(), builder.updater_overlay("minisign-public-key")
+    )
+    release_conf["plugins"]["updater"]["endpoints"] = [
+        "https://github.com/Tavotto/Tavotto/releases/latest/download/latest.json"
+    ]
+    with pytest.raises(ValueError, match="Plot Workbench"):
+        builder.validate_packaging(release_conf, updater_enabled=True)
+
+
+def test_release_tag_matches_the_desktop_version_and_is_newer_than_installed_baseline(
+    monkeypatch,
+):
+    monkeypatch.setattr(builder, "WORKBENCH_VERSION", "1.0.1")
+    builder.validate_release_inputs("v1.0.1", "public-key", "private-key")
+    with pytest.raises(ValueError, match="match"):
+        builder.validate_release_inputs("v1.0.2", "public-key", "private-key")
+
+    monkeypatch.setattr(builder, "WORKBENCH_VERSION", "1.0.0")
+    with pytest.raises(ValueError, match="higher than 1.0.0"):
+        builder.validate_release_inputs("v1.0.0", "public-key", "private-key")
+
+
+@pytest.mark.parametrize(
+    ("public_key", "private_key"),
+    [("", "private-key"), ("public-key", "")],
+)
+def test_release_build_fails_closed_without_both_signing_keys(public_key, private_key):
+    with pytest.raises(ValueError, match="signing"):
+        builder.validate_release_inputs("v1.0.1", public_key, private_key)
+
+
+def test_updater_permission_is_scoped_to_the_local_main_window():
+    main = json.loads((ROOT / "src-tauri/capabilities/main.json").read_text(encoding="utf-8"))
+    assert "updater:default" in main["permissions"]
+    assert main["windows"] == ["main"]
+    for capability in (ROOT / "src-tauri/capabilities").glob("remote-*.json"):
+        remote = json.loads(capability.read_text(encoding="utf-8"))
+        assert all("updater" not in permission for permission in remote["permissions"])
+
+
+def test_updater_crate_is_a_locked_direct_desktop_dependency():
+    lock = tomllib.loads((ROOT / "src-tauri/Cargo.lock").read_text(encoding="utf-8"))
+    desktop = next(
+        package for package in lock["package"] if package["name"] == "plot-workbench-desktop"
+    )
+    assert "tauri-plugin-updater" in desktop["dependencies"]
 
 
 @pytest.mark.parametrize("mutation", ["updater", "identity", "attribution"])

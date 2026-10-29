@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
+import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -13,9 +16,10 @@ import time
 import uuid
 from pathlib import Path
 
-from tavotto.engine import atomicio, config, patchspec, pool, runtime
+from tavotto.engine import atomicio, config, patchspec, pool, runtime, workdir
 
 from . import data as data_module
+from .assistant import AssistantService
 from .store import WorkbenchError, inside, read_json
 
 TIMEOUT = 60
@@ -29,35 +33,40 @@ def fingerprint(payload):
     ).hexdigest()
 
 
-def _data_bootstrap(helper="data_helper.py", data="data.json"):
-    return f"""
-def _pwb_load_data():
-    import importlib.util as _iu
-    import json as _json
-    import sys as _sys
-    from pathlib import Path as _Path
-    _root = _Path(__file__).resolve().parent
-    _spec = _iu.spec_from_file_location("_pwb_snapshot", _root / {helper!r})
-    _module = _iu.module_from_spec(_spec)
-    _sys.modules[_spec.name] = _module
-    _spec.loader.exec_module(_module)
-    return _module.dataframe_from_snapshot(_json.loads((_root / {data!r}).read_text("utf-8")))
-
-def main():
-    from pathlib import Path as _Path
-    _figure = build_figure(_pwb_load_data())
-    _figure.savefig(_Path(__file__).resolve().parent / "figure.pdf", bbox_inches="tight", pad_inches=0)
-"""
-
-
-def executable_code(base_code, patches, *, replay=True):
-    """Readable original function plus one generated, versioned execution block."""
-    footer = _data_bootstrap()
-    if replay:
-        footer += f"""
-PWB_OVERRIDES = {patches!r}
+def executable_code(base_code, patches, *, replay=True, output_overrides=None):
+    """Original source and one versioned entry shared by standalone and replay."""
+    histories = output_overrides or {"figure": patches}
+    footer = f"""
+PWB_SOURCE = {base_code!r}
+PWB_OVERRIDES = {histories!r}
 PWB_ENGINE_VERSION = "0.18.0"
 
+def main(_capture=True):
+    import importlib.util as _iu
+    import json as _json
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parent
+    _spec = _iu.spec_from_file_location("_pwb_execution", _root / 'execution.py')
+    _helper = _iu.module_from_spec(_spec)
+    _spec.loader.exec_module(_helper)
+    _context = _json.loads((_root / 'context.json').read_text("utf-8"))
+    _context["data_helper"] = str(_root / 'data_helper.py')
+    _context["data"] = _json.loads((_root / 'data.json').read_text("utf-8"))
+    _context["working_directory"] = str(_root / 'inputs')
+    _context["input_directory"] = str(_root / 'inputs')
+    _figures, _snapshot = _helper.execute(PWB_SOURCE, _context["data"], _context.get("schema", {{}}),
+        working_directory=_context["working_directory"], source_path=_context.get("original_path"),
+        data_helper=_context["data_helper"], input_directory=_context["input_directory"],
+        input_files=_context.get("input_files", []), original_directory=_context.get("original_directory"),
+        legacy_template=_context.get("legacy_template", False))
+    for _index, _fig in enumerate(_figures):
+        _stem = "figure" if _index == 0 else f"figure_{{_index + 1}}"
+        if _capture:
+            _fig.savefig(_root / (_stem + ".pdf"), bbox_inches="tight", pad_inches=0)
+    return _figures
+"""
+    if replay:
+        footer += """
 def _pwb_replay():
     import json as _json
     from pathlib import Path as _Path
@@ -65,13 +74,15 @@ def _pwb_replay():
     _here = _Path(__file__).resolve()
     _worker = _pool.one_shot(_here.name, str(_here.parent), "main")
     try:
-        _response = _worker.override("figure", PWB_OVERRIDES, inline_svg=True)
-        if _response.get("warnings"):
-            raise RuntimeError(_json.dumps(_response["warnings"], ensure_ascii=False))
-        for _format in ("png", "svg", "pdf"):
-            _result = _worker.export("figure", PWB_OVERRIDES, str(_here.with_suffix("." + _format)), _format, 600)
-            if _result.get("warnings"):
-                raise RuntimeError(str(_result["warnings"]))
+        for _index, (_stem, _patches) in enumerate(PWB_OVERRIDES.items()):
+            _response = _worker.override(_stem, _patches, inline_svg=True)
+            if _response.get("warnings"):
+                raise RuntimeError(_json.dumps(_response["warnings"], ensure_ascii=False))
+            for _format in ("png", "svg", "pdf"):
+                _target = _here.with_suffix("." + _format) if _index == 0 else _here.with_name(_here.stem + "_" + _stem + "." + _format)
+                _result = _worker.export(_stem, _patches, str(_target), _format, 600)
+                if _result.get("warnings"):
+                    raise RuntimeError(str(_result["warnings"]))
     finally:
         _pool.discard(_worker)
 
@@ -82,13 +93,14 @@ if __name__ == "__main__":
         footer += """
 if __name__ == "__main__":
     from pathlib import Path as _Path
-    _fig = build_figure(_pwb_load_data())
-    for _fmt in ("png", "svg", "pdf"):
-        _fig.savefig(_Path(__file__).with_suffix("." + _fmt), dpi=600, bbox_inches="tight", pad_inches=0)
+    _figures = main(_capture=False)
+    for _index, _fig in enumerate(_figures):
+        for _fmt in ("png", "svg", "pdf"):
+            _path = _Path(__file__).with_suffix("." + _fmt) if _index == 0 else _Path(__file__).with_name(_Path(__file__).stem + "_figure_" + str(_index + 1) + "." + _fmt)
+            _fig.savefig(_path, dpi=600, bbox_inches="tight", pad_inches=0)
 """
     return (
-        base_code.rstrip()
-        + "\n\n# >>> Plot Workbench generated execution block >>>\n"
+        "# >>> Plot Workbench generated execution block >>>\n"
         + footer
         + "# <<< Plot Workbench generated execution block <<<\n"
     )
@@ -123,6 +135,9 @@ class RenderService:
         self.jobs = {}
         self.latest = {}
         self.sessions = {}
+        self.assistant_previews = {}
+        self.assistant = AssistantService(self.root / "assistant")
+        self.closed = False
 
     def render(self, payload, plot_id=None):
         if plot_id:
@@ -140,15 +155,25 @@ class RenderService:
                 )
         payload = copy.deepcopy({**payload, "schema": schema})
         job_id = uuid.uuid4().hex
-        directory = inside(self.root, job_id)
-        directory.mkdir()
+        working_directory = None
+        if plot_id:
+            plot = self.store.get_plot(plot_id)
+            working_directory = str(self.store.working_directory(plot["project_id"]))
+            directory = inside(self.store.project_dir(plot["project_id"]), f"cache/runs/{job_id}")
+        else:
+            directory = inside(self.root, job_id)
+        directory.mkdir(parents=True)
+        shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
+        shutil.copy2(_MODULE_ROOT / "execution.py", directory / "execution.py")
         atomicio.write_bytes(directory / "base.py", payload["code"].encode("utf-8"))
         atomicio.write_json(
             directory / "input.json",
             {
                 "data": payload.get("data"),
                 "schema": schema,
-                "data_helper": str(_MODULE_ROOT / "data.py"),
+                "data_helper": str(directory / "data_helper.py"),
+                "working_directory": working_directory or str(directory),
+                "original_path": payload.get("original_path"),
             },
         )
         job = {
@@ -159,6 +184,7 @@ class RenderService:
             "requested_payload": copy.deepcopy(payload),
             "fingerprint": fingerprint(payload),
             "directory": str(directory),
+            "working_directory": working_directory or str(directory),
             "cancel": threading.Event(),
             "process": None,
             "created": time.monotonic(),
@@ -178,9 +204,11 @@ class RenderService:
             if job["cancel"].is_set():
                 job["status"] = "cancelled"
                 return
-            python, source = pool.resolve_worker_python(str(directory), script="base.py")
+            python, source = pool.resolve_worker_python(job["working_directory"], script="base.py")
             bundled = source == pool.SOURCE_BUNDLED
             env = runtime.probe_env(python, bundled=bundled)
+            if env is None:
+                env = os.environ.copy()
             env["MPLBACKEND"] = "Agg"
             env["PYTHONIOENCODING"] = "utf-8"
             env["TAVOTTO_NO_TELEMETRY"] = "1"
@@ -236,6 +264,8 @@ class RenderService:
             atomicio.write_json(directory / "environment.json", environment)
             job["payload"]["data"] = result["data"]
             job["environment"] = environment
+            job["outputs"] = result.get("outputs", [{"stem": "figure", "title": "图 1"}])
+            job["input_files"] = result.get("input_files", [])
             job["fingerprint"] = fingerprint(job["payload"])
             job["result"] = {
                 "run_id": job["id"],
@@ -243,6 +273,13 @@ class RenderService:
                 "data": result["data"],
                 "schema": result["schema"],
                 "environment": environment,
+                "outputs": [
+                    {
+                        **item,
+                        "preview_url": f"/api/workbench/jobs/{job['id']}/artifact/{item['stem']}.png",
+                    }
+                    for item in job["outputs"]
+                ],
             }
             job["status"] = "success"
         except Exception as error:
@@ -304,6 +341,10 @@ class RenderService:
                 }
             if payload.get("original_path"):
                 source["original_path"] = payload["original_path"]
+                root = Path(job["working_directory"])
+                original = Path(payload["original_path"]).resolve()
+                if original.is_relative_to(root):
+                    source["original_relative_path"] = original.relative_to(root).as_posix()
             return self.store.commit_plot(
                 plot_id,
                 {
@@ -313,11 +354,14 @@ class RenderService:
                     "source": source,
                     "overrides": [],
                     "environment": job.get("environment", {}),
+                    "outputs": job["outputs"],
+                    "input_files": job.get("input_files", []),
+                    "execution_version": 2,
                 },
                 job["directory"],
             )
 
-    def export_path(self, plot_id, fmt):
+    def export_path(self, plot_id, fmt, stem="figure"):
         if fmt not in ("png", "svg", "pdf"):
             raise WorkbenchError("不支持的图片格式")
         plot = self.store.get_plot(plot_id)
@@ -330,7 +374,17 @@ class RenderService:
                 raise WorkbenchError("当前草稿尚未成功运行，不能导出", "unsaved_draft", 409)
             if any(job["payload"].get(key) != plot.get(key) for key in ("code", "data", "schema")):
                 raise WorkbenchError("当前成功结果尚未保存，不能导出旧版本", "unsaved_draft", 409)
-        return inside(plot["_artifact_dir"], f"figure.{fmt}")
+        self._output(plot, stem)
+        return inside(plot["_artifact_dir"], f"{stem}.{fmt}")
+
+    @staticmethod
+    def _output(plot, stem):
+        outputs = plot.get("outputs") or [{"stem": "figure", "title": "图 1"}]
+        if not re.fullmatch(r"figure(?:_[2-9][0-9]*|_1[0-9]+)?", str(stem)) or stem not in {
+            item["stem"] for item in outputs
+        }:
+            raise WorkbenchError("图形不存在", "output_not_found", 404)
+        return next(item for item in outputs if item["stem"] == stem)
 
     def _adapter(self, plot, directory):
         directory = Path(directory)
@@ -338,44 +392,80 @@ class RenderService:
         code = plot.get("base_code", plot["code"])
         atomicio.write_bytes(directory / "base.py", code.encode("utf-8"))
         atomicio.write_json(directory / "data.json", plot["data"])
-        shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
+        for filename, fallback in (("data_helper.py", "data.py"), ("execution.py", "execution.py")):
+            frozen = Path(plot["_artifact_dir"]) / filename
+            shutil.copy2(
+                frozen if frozen.is_file() else _MODULE_ROOT / fallback, directory / filename
+            )
+        working_directory = self.store.working_directory(plot["project_id"])
+        source_inputs = Path(plot["_artifact_dir"]) / "inputs"
+        if source_inputs.is_dir():
+            shutil.copytree(source_inputs, directory / "inputs", dirs_exist_ok=True)
+        else:
+            (directory / "inputs").mkdir(exist_ok=True)
+        atomicio.write_json(
+            directory / "input.json",
+            {
+                "data": plot.get("data"),
+                "schema": plot.get("schema") or {},
+                "working_directory": str(working_directory),
+                "original_directory": str(working_directory),
+                "original_path": plot.get("source", {}).get("original_path"),
+                "data_helper": str(directory / "data_helper.py"),
+                "input_directory": str(directory / "inputs"),
+                "input_files": plot.get("input_files", []),
+                "legacy_template": not plot.get("execution_version"),
+            },
+        )
         adapter = """import importlib.util
-import sys
+import json
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent
-_SPEC = importlib.util.spec_from_file_location("pwb_base_figure", _ROOT / "base.py")
-_BASE = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = _BASE
-_SPEC.loader.exec_module(_BASE)
-build_figure = _BASE.build_figure
-""" + _data_bootstrap()
+_SPEC = importlib.util.spec_from_file_location("_pwb_execution", _ROOT / "execution.py")
+_HELPER = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_HELPER)
+def main():
+    return _HELPER.capture(json.loads((_ROOT / "input.json").read_text("utf-8")), directory=_ROOT)
+"""
         atomicio.write_bytes(directory / "adapter.py", adapter.encode("utf-8"))
         return directory
 
-    def open_session(self, plot_id):
+    def _session_worker(self, session):
+        root = self.store.working_directory(session["plot"]["project_id"])
+        # Selecting the folder is the user's explicit project-cwd decision.
+        workdir.set_mode(root, workdir.MODE_PROJECT_ROOT)
+        script = (Path(session["directory"]) / "adapter.py").relative_to(root).as_posix()
+        return pool.one_shot(script, str(root), "main")
+
+    def open_session(self, plot_id, stem="figure"):
         plot = self.store.get_plot(plot_id)
         if not plot.get("revision"):
             raise WorkbenchError("请先运行并保存当前子图", "unsaved_plot", 409)
+        self.export_path(plot_id, "png", stem)
+        self._output(plot, stem)
         sid = uuid.uuid4().hex
-        directory = self._adapter(plot, inside(self.root, f"session-{sid}"))
-        worker = pool.one_shot("adapter.py", str(directory), "main")
+        directory = self._adapter(
+            plot, inside(self.store.project_dir(plot["project_id"]), f"cache/sessions/{sid}")
+        )
+        histories = plot.get("output_overrides") or {"figure": plot.get("overrides", [])}
         session = {
             "id": sid,
             "plot_id": plot_id,
             "revision": plot["revision"],
             "plot": copy.deepcopy(plot),
-            "worker": worker,
             "directory": str(directory),
-            "patches": plot.get("overrides", []),
+            "stem": stem,
+            "patches": histories.get(stem, []),
             "lock": threading.RLock(),
             "closed": False,
         }
+        session["worker"] = self._session_worker(session)
         self.sessions[sid] = session
         try:
             response = self._session_render(session, session["patches"])
             return {
                 "session_id": sid,
-                "stem": "figure",
+                "stem": stem,
                 "script": "adapter.py",
                 "project": str(directory),
                 "manifest": response["manifest"],
@@ -390,9 +480,261 @@ build_figure = _BASE.build_figure
 
     def _session(self, sid):
         session = self.sessions.get(sid)
-        if not session or session["closed"]:
+        if self.closed or not session or session["closed"]:
             raise WorkbenchError("编辑会话已结束，请重新打开 Tavotto", "session_closed", 409)
         return session
+
+    @staticmethod
+    def _assistant_token(session, patches):
+        content = {
+            "base": session["plot"].get("base_code", session["plot"]["code"]),
+            "generation": session.get("code_generation", 0),
+            "revision": session["revision"],
+            "patches": patches,
+        }
+        return hashlib.sha256(
+            json.dumps(content, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+
+    def start_assistant(self, body):
+        sid = body.get("session_id")
+        if sid is None:
+            return self.assistant.start(
+                code=body.get("code"),
+                prompt=body.get("prompt"),
+                schema=body.get("schema"),
+                data_context=body.get("data_context"),
+                model=body.get("model"),
+                effort=body.get("effort"),
+                history=body.get("history"),
+                parent_id=body.get("parent_id"),
+            )
+        if not isinstance(sid, str):
+            raise WorkbenchError("编辑会话标识无效")
+        session = self._session(sid)
+        with session["lock"]:
+            patches = body.get("patches", [])
+            if patches != session["patches"]:
+                raise WorkbenchError(
+                    "图内修改尚未同步，请同步后再使用 Codex", "stale_assistant", 409
+                )
+            return self.assistant.start(
+                code=session["plot"].get("base_code", session["plot"]["code"]),
+                prompt=body.get("prompt"),
+                schema=session["plot"].get("schema"),
+                data_context=session["plot"].get("data"),
+                model=body.get("model"),
+                effort=body.get("effort"),
+                owner=sid,
+                token=self._assistant_token(session, patches),
+                context={"stem": session["stem"], "overrides": patches},
+                history=body.get("history"),
+                parent_id=body.get("parent_id"),
+            )
+
+    @staticmethod
+    def _session_payload(session):
+        response = session["response"]
+        return {
+            "session_id": session["id"],
+            "stem": session["stem"],
+            "script": "adapter.py",
+            "project": session["directory"],
+            "manifest": response["manifest"],
+            "svg": response.get("svg"),
+            "overrides": session["patches"],
+            "preview": response.get("preview"),
+            "renderRevision": response.get("render_revision", 1),
+        }
+
+    @staticmethod
+    def _session_histories(session, patches):
+        plot = session["plot"]
+        histories = {item["stem"]: [] for item in plot.get("outputs", [{"stem": "figure"}])}
+        histories.update(
+            copy.deepcopy(plot.get("output_overrides") or {"figure": plot.get("overrides", [])})
+        )
+        histories[session["stem"]] = copy.deepcopy(patches)
+        return histories
+
+    def preview_assistant(self, sid, task_id, patches):
+        return self.apply_assistant(sid, task_id, patches, preview_only=True)
+
+    def resume_session(self, sid, patches):
+        session = self._session(sid)
+        with session["lock"]:
+            self._session(sid)
+            if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
+                raise WorkbenchError("子图已发生变化，请重新打开编辑会话", "stale_session", 409)
+            # Return the authoritative render; the caller can replay its own draft.
+            return self._session_payload(session)
+
+    def apply_assistant(self, sid, task_id, patches, *, preview_only=False, require_preview=False):
+        session = self._session(sid)
+        with session["lock"]:
+            self._session(sid)
+            if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
+                raise WorkbenchError("子图已发生变化，请重新打开编辑会话", "stale_session", 409)
+            if patches != session["patches"]:
+                raise WorkbenchError(
+                    "图内编辑已发生变化，请重新让 Codex 修改", "stale_assistant", 409
+                )
+            code = self.assistant.proposal(
+                task_id, owner=sid, token=self._assistant_token(session, patches)
+            )
+            if require_preview:
+                proof = self.assistant_previews.get((sid, task_id))
+                if not proof or proof[0] != self._assistant_token(session, patches):
+                    raise WorkbenchError("请先运行图形预览", "assistant_preview_required", 409)
+            if code == session["plot"].get("base_code", session["plot"]["code"]):
+                if preview_only:
+                    image = self._assistant_preview_image(session, patches)
+                    return {"before_image": image, "after_image": image}
+                return self._session_payload(session)
+            candidate = {**session, "plot": copy.deepcopy(session["plot"])}
+            candidate["plot"]["base_code"] = code
+            directory = Path(session["directory"]).parent / uuid.uuid4().hex
+            worker = None
+            try:
+                candidate["directory"] = str(self._adapter(candidate["plot"], directory))
+                worker = self._session_worker(candidate)
+                candidate["worker"] = worker
+                histories = self._session_histories(candidate, patches)
+                built = worker.ensure_built()
+                self._check_assistant_inputs(session, built)
+                if set(built.get("stems", {})) != set(histories):
+                    raise WorkbenchError(
+                        "Codex 改变了出图数量，请保留原有图形后重试",
+                        "assistant_outputs_changed",
+                        409,
+                    )
+                for stem, history in histories.items():
+                    result = worker.override(stem, history, inline_svg=True)
+                    if result.get("warnings"):
+                        raise WorkbenchError(
+                            "Codex 结果无法保留已有图内编辑，未应用", "override_warnings", 409
+                        )
+                self._session_render(candidate, patches)
+                # A root close can start while this lock is held. Never accept
+                # a candidate from that closed service/session generation.
+                self._session(sid)
+                if preview_only:
+                    figures = [
+                        {
+                            "stem": stem,
+                            "before_image": self._assistant_preview_image(session, history, stem),
+                            "after_image": self._assistant_preview_image(candidate, history, stem),
+                        }
+                        for stem, history in histories.items()
+                    ]
+                    figures.sort(key=lambda item: item["stem"] != session["stem"])
+                    selected = next(item for item in figures if item["stem"] == session["stem"])
+                    comparison = {**selected, "figures": figures}
+                elif require_preview:
+                    proof = self.assistant_previews.get((sid, task_id))
+                    images = [
+                        {
+                            "stem": stem,
+                            "after_image": self._assistant_preview_image(candidate, history, stem),
+                        }
+                        for stem, history in histories.items()
+                    ]
+                    digest = self._assistant_images_digest(images)
+                    if not proof or proof != (self._assistant_token(session, patches), digest):
+                        raise WorkbenchError(
+                            "本次运行的图形与预览不同，未应用；请重新运行预览。",
+                            "assistant_preview_changed",
+                            409,
+                        )
+                # Preview rendering and proof checks can be long-running.
+                # A root switch may close the service while they run.
+                self._session(sid)
+            except pool.WorkerError as exc:
+                self._discard_assistant_candidate(worker, directory)
+                raise WorkbenchError(
+                    f"Codex 候选代码无法运行，未应用：{exc}", "assistant_render_failed", 409
+                ) from exc
+            except BaseException:
+                self._discard_assistant_candidate(worker, directory)
+                raise
+            if preview_only:
+                self._discard_assistant_candidate(worker, directory)
+                if len(self.assistant_previews) >= 24:
+                    self.assistant_previews.pop(next(iter(self.assistant_previews)))
+                self.assistant_previews[(sid, task_id)] = (
+                    self._assistant_token(session, patches),
+                    self._assistant_images_digest(comparison["figures"]),
+                )
+                return comparison
+            candidate["code_changed"] = True
+            candidate["code_generation"] = session.get("code_generation", 0) + 1
+            previous_worker = session["worker"]
+            previous_directory = Path(session["directory"])
+            # Queued render/preview requests may already hold this dict and lock.
+            # Keep its identity so they observe the accepted candidate worker.
+            session.update(candidate)
+            try:
+                self._discard_assistant_candidate(previous_worker, previous_directory)
+            except (OSError, WorkbenchError):
+                # The candidate has already been accepted; a cleanup failure
+                # must not falsely report that the transaction was rejected.
+                logging.getLogger(__name__).warning(
+                    "Unable to remove a retired assistant session directory", exc_info=True
+                )
+            return self._session_payload(session)
+
+    @staticmethod
+    def _discard_assistant_candidate(worker, directory):
+        # Only the fresh UUID child we created is eligible for removal.
+        if worker is not None:
+            pool.discard(worker)
+        directory = Path(directory)
+        if directory.is_symlink() or not re.fullmatch(r"[0-9a-f]{32}", directory.name):
+            raise WorkbenchError("无法安全清理 Codex 预览目录", "assistant_cleanup_failed", 500)
+        if directory.exists():
+            shutil.rmtree(directory)
+
+    @staticmethod
+    def _assistant_preview_image(session, patches, stem=None):
+        path = session["worker"].preview_png(
+            stem or session["stem"], patches, 1200, uuid.uuid4().hex
+        )
+        return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+    @staticmethod
+    def _assistant_images_digest(figures):
+        digest = hashlib.sha256()
+        for item in sorted(figures, key=lambda value: value["stem"]):
+            digest.update(item["stem"].encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(item["after_image"].encode("ascii"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _check_assistant_inputs(self, session, built):
+        # Keep Tavotto's frozen data contract. The worker's Python file observer
+        # covers project files/local modules; its documented blind channels
+        # (native readers, network, databases) are not claimed as covered here.
+        inputs = (built.get("runtime") or {}).get("inputs") or {}
+        allowed = {item["path"] for item in session["plot"].get("input_files", [])}
+        root = self.store.working_directory(session["plot"]["project_id"])
+        # The owned session/artifact directories exist in both storage layouts;
+        # a v1 working directory must never be exempted wholesale.
+        owned = [
+            Path(session["directory"]).parent.resolve(),
+            Path(session["plot"]["_artifact_dir"]).resolve(),
+        ]
+        for item in inputs.get("files", []) + inputs.get("local_modules", []):
+            relative = Path(item["path"])
+            actual = (root / relative).resolve()
+            if any(actual.is_relative_to(directory) for directory in owned):
+                continue
+            if relative.as_posix() not in allowed:
+                raise WorkbenchError(
+                    "Codex 引用了新的项目数据或模块，未应用。图内编辑须沿用已保存的数据；更换数据请新建图。",
+                    "assistant_inputs_changed",
+                    409,
+                )
 
     def _session_render(self, session, patches):
         normalized = (
@@ -400,7 +742,7 @@ build_figure = _BASE.build_figure
             if hasattr(patchspec, "canonical_patches")
             else patches
         )
-        response = session["worker"].override("figure", normalized, inline_svg=True)
+        response = session["worker"].override(session["stem"], normalized, inline_svg=True)
         if response.get("warnings"):
             raise WorkbenchError(
                 "编辑无法完整应用：" + str(response["warnings"]), "override_warnings", 409
@@ -412,13 +754,15 @@ build_figure = _BASE.build_figure
     def session_render(self, sid, patches):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             return self._session_render(session, patches)
 
     def session_preview(self, sid, patches, bucket=1600):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             path = session["worker"].preview_png(
-                "figure", patches, max(200, min(int(bucket), 6400)), uuid.uuid4().hex
+                session["stem"], patches, max(200, min(int(bucket), 6400)), uuid.uuid4().hex
             )
             destination = Path(session["directory"]) / "preview.png"
             shutil.copy2(path, destination)
@@ -427,24 +771,28 @@ build_figure = _BASE.build_figure
     def finish_session(self, sid, patches):
         session = self._session(sid)
         with session["lock"]:
+            self._session(sid)
             if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
                 raise WorkbenchError(
                     "子图已发生变化，当前编辑会话不能覆盖新版本", "stale_session", 409
                 )
+            if session.get("code_changed"):
+                return self._finish_assistant_session(session, patches)
             hot = self._session_render(session, patches)
             directory = Path(session["directory"])
-            staged = directory / f"verified-{uuid.uuid4().hex}"
+            staged = directory / f"v-{uuid.uuid4().hex[:8]}"
             staged.mkdir()
-            clean = pool.one_shot("adapter.py", str(directory), "main")
+            clean = self._session_worker(session)
+            stem = session["stem"]
             try:
-                replay = clean.override("figure", session["patches"], inline_svg=True)
+                replay = clean.override(stem, session["patches"], inline_svg=True)
                 if replay.get("warnings"):
                     raise WorkbenchError("重新绘图未能完整应用编辑", "replay_failed", 409)
                 # The same renderer draws both snapshots at the same resolution.
                 hot_png = session["worker"].preview_png(
-                    "figure", session["patches"], 1600, "verify-hot"
+                    stem, session["patches"], 1600, "verify-hot"
                 )
-                cold_png = clean.preview_png("figure", session["patches"], 1600, "verify-cold")
+                cold_png = clean.preview_png(stem, session["patches"], 1600, "verify-cold")
                 from tavotto import pdfbackend
 
                 pixels = pdfbackend.compare_png(Path(hot_png), Path(cold_png))
@@ -462,30 +810,111 @@ build_figure = _BASE.build_figure
                     raise WorkbenchError(
                         "重放后的图片与当前编辑不一致，未保存", "replay_divergence", 409
                     )
+                from .store import copy_artifacts
+
+                copy_artifacts(
+                    session["plot"]["_artifact_dir"], staged, session["plot"].get("outputs", [])
+                )
                 for fmt in ("png", "svg", "pdf"):
                     result = clean.export(
-                        "figure", session["patches"], str(staged / f"figure.{fmt}"), fmt, 600
+                        stem, session["patches"], str(staged / f"{stem}.{fmt}"), fmt, 600
                     )
                     if result.get("warnings"):
                         raise WorkbenchError("导出时无法完整应用编辑", "replay_failed", 409)
                 atomicio.write_json(staged / "manifest.json", replay["manifest"])
-                shutil.copy2(_MODULE_ROOT / "data.py", staged / "data_helper.py")
+                shutil.copy2(directory / "data_helper.py", staged / "data_helper.py")
+                histories = {
+                    item["stem"]: []
+                    for item in session["plot"].get("outputs", [{"stem": "figure"}])
+                }
+                histories.update(
+                    session["plot"].get("output_overrides")
+                    or {"figure": session["plot"].get("overrides", [])}
+                )
+                histories[stem] = session["patches"]
                 replay_code = executable_code(
-                    session["plot"].get("base_code", session["plot"]["code"]), session["patches"]
+                    session["plot"].get("base_code", session["plot"]["code"]),
+                    session["patches"],
+                    output_overrides=histories,
                 )
                 plot = self.store.commit_tavotto(
-                    session["plot_id"], session["patches"], replay_code, staged
+                    session["plot_id"],
+                    histories.get("figure", []),
+                    replay_code,
+                    staged,
+                    output_overrides=histories,
+                    expected_revision=session["revision"],
                 )
             finally:
                 pool.discard(clean)
             self.cancel_session(sid)
             return plot
 
+    def _finish_assistant_session(self, session, patches):
+        """A changed base must verify/export all figures, including inactive ones."""
+        from tavotto import app as tavotto_app, pdfbackend
+
+        from .store import copy_artifacts
+
+        self._session_render(session, patches)
+        histories = self._session_histories(session, session["patches"])
+        directory = Path(session["directory"])
+        staged = directory / f"v-{uuid.uuid4().hex[:8]}"
+        staged.mkdir()
+        copy_artifacts(session["plot"]["_artifact_dir"], staged, session["plot"].get("outputs", []))
+        clean = self._session_worker(session)
+        try:
+            built = clean.ensure_built()
+            self._check_assistant_inputs(session, built)
+            if set(built.get("stems", {})) != set(histories):
+                raise WorkbenchError("重新绘图的图形集合发生变化，未保存", "replay_divergence", 409)
+            for stem, history in histories.items():
+                hot = session["worker"].override(stem, history, inline_svg=True)
+                replay = clean.override(stem, history, inline_svg=True)
+                if hot.get("warnings") or replay.get("warnings"):
+                    raise WorkbenchError("重新绘图未能完整应用编辑，未保存", "replay_failed", 409)
+                geometry_diffs, _ = tavotto_app._compare_manifests(
+                    hot["manifest"], replay["manifest"]
+                )
+                hot_png = session["worker"].preview_png(stem, history, 1600, f"verify-hot-{stem}")
+                cold_png = clean.preview_png(stem, history, 1600, f"verify-cold-{stem}")
+                pixels = pdfbackend.compare_png(Path(hot_png), Path(cold_png))
+                if geometry_diffs or not _pixels_match(pixels):
+                    raise WorkbenchError(
+                        "重放后的图形与当前编辑不一致，未保存", "replay_divergence", 409
+                    )
+                for fmt in ("png", "svg", "pdf"):
+                    exported = clean.export(stem, history, str(staged / f"{stem}.{fmt}"), fmt, 600)
+                    if exported.get("warnings"):
+                        raise WorkbenchError("导出无法完整应用编辑，未保存", "replay_failed", 409)
+                if stem == "figure":
+                    atomicio.write_json(staged / "manifest.json", replay["manifest"])
+            shutil.copy2(directory / "data_helper.py", staged / "data_helper.py")
+            base_code = session["plot"]["base_code"]
+            replay_code = executable_code(
+                base_code, histories.get("figure", []), output_overrides=histories
+            )
+            plot = self.store.commit_tavotto(
+                session["plot_id"],
+                histories.get("figure", []),
+                replay_code,
+                staged,
+                output_overrides=histories,
+                base_code=base_code,
+                expected_revision=session["revision"],
+            )
+        finally:
+            pool.discard(clean)
+        self.cancel_session(session["id"])
+        return plot
+
     def cancel_session(self, sid):
         session = self.sessions.get(sid)
-        if session and not session["closed"]:
-            session["closed"] = True
-            pool.discard(session["worker"])
+        if session:
+            with session["lock"]:
+                if not session["closed"]:
+                    session["closed"] = True
+                    pool.discard(session["worker"])
 
     def export_code(self, plot_id, directory=None, replace=False):
         # The no-overwrite name allocation and the write form one operation;
@@ -497,6 +926,7 @@ build_figure = _BASE.build_figure
         plot = self.store.get_plot(plot_id)
         if not plot.get("revision"):
             raise WorkbenchError("请先保存成功运行的子图", "unsaved_plot", 409)
+        self.export_path(plot_id, "png")
         if replace:
             original = plot.get("source", {}).get("original_path")
             if not original:
@@ -523,14 +953,38 @@ build_figure = _BASE.build_figure
         assets = target.parent / f"{target.stem}_assets_{uuid.uuid4().hex[:8]}"
         assets.mkdir()
         atomicio.write_json(assets / "data.json", plot["data"])
-        shutil.copy2(_MODULE_ROOT / "data.py", assets / "data_helper.py")
-        locked = plot["state"] == "TAVOTTO_ONLY"
-        code = executable_code(
-            plot.get("base_code", plot["code"]), plot.get("overrides", []), replay=locked
+        for filename, fallback in (("data_helper.py", "data.py"), ("execution.py", "execution.py")):
+            frozen = Path(plot["_artifact_dir"]) / filename
+            shutil.copy2(frozen if frozen.is_file() else _MODULE_ROOT / fallback, assets / filename)
+        inputs = Path(plot["_artifact_dir"]) / "inputs"
+        if inputs.is_dir():
+            shutil.copytree(inputs, assets / "inputs")
+        else:
+            (assets / "inputs").mkdir()
+        atomicio.write_json(
+            assets / "context.json",
+            {
+                "schema": plot.get("schema") or {},
+                "original_path": plot.get("source", {}).get("original_path"),
+                "original_directory": str(self.store.working_directory(plot["project_id"])),
+                "input_files": plot.get("input_files", []),
+                "legacy_template": not plot.get("execution_version"),
+            },
         )
-        code = code.replace(
-            "_root / 'data_helper.py'", f"_root / {f'{assets.name}/data_helper.py'!r}"
-        ).replace("_root / 'data.json'", f"_root / {f'{assets.name}/data.json'!r}")
+        atomicio.write_bytes(
+            assets / "original.py", plot.get("base_code", plot["code"]).encode("utf-8")
+        )
+        locked = plot["state"] == "TAVOTTO_ONLY"
+        histories = {item["stem"]: [] for item in plot.get("outputs", [{"stem": "figure"}])}
+        histories.update(plot.get("output_overrides") or {"figure": plot.get("overrides", [])})
+        code = executable_code(
+            plot.get("base_code", plot["code"]),
+            plot.get("overrides", []),
+            replay=locked,
+            output_overrides=histories,
+        )
+        for filename in ("data_helper.py", "data.json", "execution.py", "context.json", "inputs"):
+            code = code.replace(f"_root / {filename!r}", f"_root / {f'{assets.name}/{filename}'!r}")
         environment = plot.get("environment") or {}
         packages = environment.get("packages") or {}
         requirements = "".join(
@@ -563,6 +1017,8 @@ build_figure = _BASE.build_figure
         }
 
     def close(self):
+        self.closed = True
+        self.assistant.close()
         for job in self.jobs.values():
             job["cancel"].set()
         for sid in list(self.sessions):

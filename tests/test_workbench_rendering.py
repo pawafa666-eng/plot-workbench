@@ -1,3 +1,4 @@
+import sys
 import time
 
 import pytest
@@ -33,6 +34,30 @@ def test_validated_run_can_save_and_export_three_formats(tmp_path):
     assert saved["revision"] == 1
     for fmt in ("png", "svg", "pdf"):
         assert service.export_path(plot["id"], fmt).stat().st_size > 100
+
+
+def test_render_uses_inherited_environment_when_probe_returns_none(tmp_path, monkeypatch):
+    store = WorkbenchStore(tmp_path / "data")
+    service = RenderService(store, tmp_path / "jobs")
+    project = store.create_project("P")
+    plot = store.create_plot(project["id"], "F")
+    example = EXAMPLES[1]
+    monkeypatch.setattr(
+        "tavotto.workbench.rendering.pool.resolve_worker_python",
+        lambda *_args, **_kwargs: (sys.executable, "external"),
+    )
+    monkeypatch.setattr(
+        "tavotto.workbench.rendering.runtime.probe_env",
+        lambda *_args, **_kwargs: None,
+    )
+
+    job_id = service.render(
+        {"code": example["code"], "data": example_snapshot(example), "schema": example["schema"]},
+        plot["id"],
+    )
+
+    result = wait_job(service, job_id)
+    assert result["status"] == "success", result
 
 
 def test_failed_and_obsolete_jobs_cannot_be_saved(tmp_path):

@@ -266,12 +266,20 @@ def _encode_cell(value: Any) -> Any:
 def _decode_cell(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
-    import pandas as pd
-
     tag = value.get(_TAG)
     payload = value.get("value")
-    if tag in ("na", "nat", "nan"):
-        return {"na": pd.NA, "nat": pd.NaT, "nan": math.nan}[tag]
+    if tag in ("na", "nat", "timestamp", "timedelta"):
+        import pandas as pd
+
+        if tag == "na":
+            return pd.NA
+        if tag == "nat":
+            return pd.NaT
+        if tag == "timestamp":
+            return pd.Timestamp(payload)
+        return pd.Timedelta(int(payload), unit="ns")
+    if tag == "nan":
+        return math.nan
     if tag == "infinity":
         return math.inf if payload == 1 else -math.inf
     decoders = {
@@ -280,13 +288,10 @@ def _decode_cell(value: Any) -> Any:
         "datetime": dt.datetime.fromisoformat,
         "date": dt.date.fromisoformat,
         "time": dt.time.fromisoformat,
-        "timestamp": pd.Timestamp,
         "bytes": base64.b64decode,
     }
     if tag in decoders:
         return decoders[tag](payload)
-    if tag == "timedelta":
-        return pd.Timedelta(int(payload), unit="ns")
     if tag == "python_timedelta":
         return dt.timedelta(days=payload[0], seconds=payload[1], microseconds=payload[2])
     if tag == "complex":
@@ -698,7 +703,11 @@ def validate_schema(
             encoded = values[index - 1]
             if dtype == "any" or _missing(encoded):
                 continue
-            value = _decode_cell(encoded)
+            # Schema roles inspect JSON cell types in the Flask parent. Rich
+            # pandas values are reconstructed only by the scientific worker.
+            value = encoded
+            if isinstance(value, dict) and value.get(_TAG) in ("integer", "decimal", "infinity"):
+                value = _decode_cell(value)
             numeric = (
                 isinstance(value, numbers.Number)
                 and not isinstance(value, (bool, complex))

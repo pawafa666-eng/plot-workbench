@@ -73,10 +73,6 @@ pub struct ShellText {
     pub app_check_updates: &'static str,
     pub file: &'static str,
     pub file_open_project: &'static str,
-    /// 「文件 → 连接远程实例…」与那个窗口的标题（ADR 0105）。`{port}` = 转发的本机端口
-    pub file_connect_remote: &'static str,
-    pub remote_window_title: &'static str,
-    pub remote_window_connected_title: &'static str,
     pub file_save: &'static str,
     pub file_save_layout: &'static str,
     pub file_export: &'static str,
@@ -159,12 +155,6 @@ const ZH: ShellText = ShellText {
     app_check_updates: "检查更新…",
     file: "文件",
     file_open_project: "打开项目…",
-    file_connect_remote: "连接远程实例…",
-    remote_window_title: concat!(env!("TAVOTTO_PRODUCT_NAME"), " — 连接远程实例"),
-    remote_window_connected_title: concat!(
-        env!("TAVOTTO_PRODUCT_NAME"),
-        " — 远程实例（127.0.0.1:{port}）"
-    ),
     file_save: "保存排版",
     file_save_layout: "另存为新排版…",
     file_export: "导出…",
@@ -235,15 +225,6 @@ const EN: ShellText = ShellText {
     app_check_updates: "Check for Updates…",
     file: "File",
     file_open_project: "Open Project…",
-    file_connect_remote: "Connect to Remote Instance…",
-    remote_window_title: concat!(
-        env!("TAVOTTO_PRODUCT_NAME"),
-        " — Connect to Remote Instance"
-    ),
-    remote_window_connected_title: concat!(
-        env!("TAVOTTO_PRODUCT_NAME"),
-        " — Remote Instance (127.0.0.1:{port})"
-    ),
     file_save: "Save Layout",
     file_save_layout: "Save Layout As…",
     file_export: "Export…",
@@ -417,9 +398,6 @@ mod tests {
                 t.app_quit,
                 t.file,
                 t.file_open_project,
-                t.file_connect_remote,
-                t.remote_window_title,
-                t.remote_window_connected_title,
                 t.file_export,
                 t.quit,
                 t.edit,
@@ -525,9 +503,6 @@ mod tests {
             EN.app_quit,
             EN.file,
             EN.file_open_project,
-            EN.file_connect_remote,
-            EN.remote_window_title,
-            EN.remote_window_connected_title,
             EN.file_export,
             EN.quit,
             EN.edit,

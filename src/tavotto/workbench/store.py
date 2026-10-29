@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tavotto.engine import atomicio, projectenv
+from tavotto.engine import atomicio, brand, projectenv
 
 from .examples import EXAMPLES, example_snapshot
 
@@ -58,24 +58,55 @@ def name_of(value):
 
 DEFAULT_CODE = """import matplotlib.pyplot as plt
 
-def build_figure(data):
-    fig, ax = plt.subplots(figsize=(5.2, 3.6))
-    ax.plot(data.iloc[:, 0], data.iloc[:, 1], marker="o")
-    ax.set_xlabel(str(data.columns[0]))
-    ax.set_ylabel(str(data.columns[1]))
-    fig.tight_layout()
-    return fig
+if "data" in globals() and data is not None:
+    x, y = data.iloc[:, 0], data.iloc[:, 1]
+else:
+    x, y = [1, 2, 3, 4, 5], [2, 4, 3, 6, 7]
+
+fig, ax = plt.subplots(figsize=(5, 3.5))
+ax.plot(x, y, "o-", color="#29465b")
+ax.set(xlabel="x", ylabel="y")
+fig.tight_layout()
 """
 
 DEFAULT_SCHEMA = {"rows": {"mode": "variable", "min": 1}, "columns": {"mode": "variable", "min": 1}}
+PROJECT_METADATA_DIR = f".{brand.APP_DATA_SLUG}"
 REVISION_ARTIFACTS = (
     "figure.png",
     "figure.svg",
     "figure.pdf",
     "manifest.json",
     "data_helper.py",
+    "execution.py",
     "environment.json",
 )
+
+
+def copy_artifacts(artifacts, target, outputs=()):
+    source_root = Path(artifacts)
+    filenames = set(REVISION_ARTIFACTS)
+    for output in outputs or ():
+        stem = output["stem"]
+        if not re.fullmatch(r"figure(?:_[1-9][0-9]*)?", stem):
+            raise WorkbenchError("图形标识无效")
+        filenames.update(f"{stem}.{fmt}" for fmt in ("png", "svg", "pdf"))
+    for filename in filenames:
+        source = inside(source_root, filename)
+        if source.is_file():
+            shutil.copy2(source, target / filename)
+    if (source_root / "inputs").is_dir():
+        shutil.copytree(source_root / "inputs", target / "inputs")
+
+
+def output_previews(record, kind):
+    outputs = record.get("outputs") or [{"stem": "figure", "title": "图 1"}]
+    record["outputs"] = [
+        {
+            **item,
+            "preview_url": f"/api/workbench/artifact/{kind}/{record['id']}/{record['revision']}/{item['stem']}.png",
+        }
+        for item in outputs
+    ]
 
 
 def _allocate_revision(path, previous):
@@ -162,8 +193,11 @@ class WorkbenchStore:
         entry = self._index()["projects"].get(project_id)
         if not entry:
             raise WorkbenchError("项目不存在", "not_found", 404)
-        # External project folders enter this index only through an explicit open.
-        path = Path(entry["path"]).resolve()
+        # External folders enter this index only through an explicit selection.
+        registered = Path(entry["path"])
+        if registered.is_symlink():
+            raise WorkbenchError("项目目录已变为符号链接，请重新打开项目", "path_out_of_scope", 403)
+        path = registered.resolve()
         if not path.is_dir():
             raise WorkbenchError("项目已移动，请使用「打开项目」重新定位", "project_moved", 404)
         return path
@@ -171,12 +205,24 @@ class WorkbenchStore:
     def _project(self, project_id):
         return read_json(self.project_dir(project_id) / "project.json")
 
+    def working_directory(self, project_id):
+        path = self.project_dir(project_id)
+        record = self._project(project_id)
+        return path.parent if record.get("storage_layout") == "folder" else path
+
     def list_projects(self):
         result = []
         for pid, entry in self._index()["projects"].items():
             try:
                 record = self._project(pid)
-                result.append({**record, "path": entry["path"], "plot_count": len(record["plots"])})
+                result.append(
+                    {
+                        **record,
+                        "path": entry["path"],
+                        "working_directory": str(self.working_directory(pid)),
+                        "plot_count": len(record["plots"]),
+                    }
+                )
             except WorkbenchError:
                 result.append(
                     {
@@ -190,33 +236,92 @@ class WorkbenchStore:
                 )
         return result
 
-    def create_project(self, name):
+    def create_project(self, name, path=None):
         with self.lock:
+            name = name_of(name)
             pid = uuid.uuid4().hex
-            path = inside(self.root, Path("projects") / pid)
-            path.mkdir()
+            if pid in self._index()["projects"]:
+                raise WorkbenchError("项目标识符已存在", "project_identity_conflict", 409)
+            folder_backed = path is not None
+            if folder_backed:
+                folder = Path(path).expanduser().resolve()
+                if not folder.is_dir():
+                    raise WorkbenchError("请选择已存在的项目文件夹", "not_found", 404)
+                path = inside(folder, PROJECT_METADATA_DIR)
+            else:
+                # Retain the internal v1 constructor for existing integrations.
+                path = inside(self.root, Path("projects") / pid)
+            try:
+                path.mkdir()
+            except FileExistsError:
+                raise WorkbenchError(
+                    "此目录已有项目内容，请使用「打开项目」", "project_exists", 409
+                ) from None
             record = {
                 "schema_version": 1,
                 "id": pid,
-                "name": name_of(name),
+                "name": name,
                 "created_at": now(),
                 "plots": {},
             }
+            if folder_backed:
+                record["storage_layout"] = "folder"
             atomicio.write_json(path / "project.json", record)
             return self.open_project(path)
 
     def open_project(self, path):
         with self.lock:
             path = Path(path).expanduser().resolve()
-            record = read_json(path / "project.json")
-            checked_id(record["id"])
-            if record.get("schema_version") != 1 or not isinstance(record.get("plots"), dict):
+            if not path.is_dir():
+                raise WorkbenchError("项目目录不存在", "not_found", 404)
+            if (path / PROJECT_METADATA_DIR).exists():
+                path = inside(path, PROJECT_METADATA_DIR)
+            try:
+                record = read_json(path / "project.json")
+            except (OSError, json.JSONDecodeError) as exc:
+                raise WorkbenchError("无法读取项目文件") from exc
+            if (
+                not isinstance(record, dict)
+                or record.get("schema_version") != 1
+                or not isinstance(record.get("plots"), dict)
+                or record.get("storage_layout") not in (None, "folder")
+                or (record.get("storage_layout") == "folder" and path.name != PROJECT_METADATA_DIR)
+            ):
                 raise WorkbenchError("不支持的项目格式")
-            for value in record["plots"].values():
-                inside(path, value)
+            checked_id(record.get("id"))
+            name_of(record.get("name"))
+            for plot_id, relative in record["plots"].items():
+                checked_id(plot_id)
+                if not isinstance(relative, str) or Path(relative).is_absolute():
+                    raise WorkbenchError("项目内路径必须为相对路径")
+                if inside(path, relative) == path:
+                    raise WorkbenchError("子图目录不能是项目目录")
             index = self._index()
+            previous = index["projects"].get(record["id"])
+            if previous:
+                registered = Path(previous["path"]).resolve()
+                if registered != path and registered.exists():
+                    raise WorkbenchError(
+                        "另一目录中的同标识项目仍在，请保留原项目或移动后再打开",
+                        "project_identity_conflict",
+                        409,
+                    )
+            for project_id in index["projects"]:
+                if project_id == record["id"]:
+                    continue
+                try:
+                    other = self._project(project_id)
+                except WorkbenchError:
+                    continue
+                if record["plots"].keys() & other["plots"].keys():
+                    raise WorkbenchError("子图标识符与另一项目冲突", "plot_identity_conflict", 409)
             index["projects"][record["id"]] = {"path": str(path), "name": record["name"]}
-            atomicio.write_json(self.index_path, index)
+            backups = _document_backups(self.index_path)
+            try:
+                atomicio.write_json(self.index_path, index)
+            except Exception:
+                _restore_documents(backups)
+                raise
             return self.get_project(record["id"])
 
     def get_project(self, project_id):
@@ -224,6 +329,7 @@ class WorkbenchStore:
         return {
             **record,
             "path": str(self.project_dir(project_id)),
+            "working_directory": str(self.working_directory(project_id)),
             "plots": [self.get_plot(pid) for pid in record["plots"]],
         }
 
@@ -241,6 +347,8 @@ class WorkbenchStore:
         with self.lock:
             project = self._project(project_id)
             pid = uuid.uuid4().hex
+            if any(pid in item["plots"] for item in self.list_projects()):
+                raise WorkbenchError("子图标识符已存在", "plot_identity_conflict", 409)
             relative = Path("plots") / pid
             path = inside(self.project_dir(project_id), relative)
             path.mkdir(parents=True)
@@ -283,6 +391,19 @@ class WorkbenchStore:
                 record["preview_url"] = (
                     f"/api/workbench/artifact/plot/{plot_id}/{record['revision']}/figure.png"
                 )
+                output_previews(record, "plot")
+        record["working_directory"] = str(self.working_directory(record["project_id"]))
+        record["export_directory"] = str(
+            self.project_dir(record["project_id"]) / "exports" / record["id"]
+        )
+        source = record.get("source") or {}
+        if source.get("original_relative_path"):
+            record["source"] = {
+                **source,
+                "original_path": str(
+                    inside(record["working_directory"], source["original_relative_path"])
+                ),
+            }
         return record
 
     def assert_editable(self, plot_id):
@@ -310,7 +431,8 @@ class WorkbenchStore:
             **{
                 k: v
                 for k, v in old.items()
-                if not k.startswith("_") and k not in ("preview_url", "name")
+                if not k.startswith("_")
+                and k not in ("preview_url", "name", "working_directory", "export_directory")
             },
             **copy.deepcopy(payload),
             "revision": revision,
@@ -318,10 +440,7 @@ class WorkbenchStore:
             "updated_at": now(),
         }
         if artifacts:
-            for filename in REVISION_ARTIFACTS:
-                source = Path(artifacts) / filename
-                if source.is_file():
-                    shutil.copy2(source, target / filename)
+            copy_artifacts(artifacts, target, payload.get("outputs", []))
         atomicio.write_bytes(target / "source.py", payload["code"].encode("utf-8"))
         atomicio.write_json(target / "data.json", payload.get("data"))
         atomicio.write_json(target / "record.json", payload)
@@ -341,9 +460,23 @@ class WorkbenchStore:
             self.assert_editable(plot_id)
             return self._commit_plot(plot_id, payload, artifacts)
 
-    def commit_tavotto(self, plot_id, patches, replay_code, artifacts=None):
+    def commit_tavotto(
+        self,
+        plot_id,
+        patches,
+        replay_code,
+        artifacts=None,
+        *,
+        output_overrides=None,
+        base_code=None,
+        expected_revision=None,
+    ):
         with self.lock:
             old = self.get_plot(plot_id)
+            if expected_revision is not None and old["revision"] != expected_revision:
+                raise WorkbenchError(
+                    "子图已发生变化，本次验证结果不能覆盖新版本", "stale_session", 409
+                )
             source = dict(old.get("source") or {})
             source["kind"] = "external"
             source["via"] = "tavotto"
@@ -351,9 +484,12 @@ class WorkbenchStore:
                 plot_id,
                 {
                     "state": "TAVOTTO_ONLY",
-                    "base_code": old.get("base_code", old["code"]),
+                    "base_code": base_code
+                    if base_code is not None
+                    else old.get("base_code", old["code"]),
                     "code": replay_code,
                     "overrides": patches,
+                    "output_overrides": output_overrides or {"figure": patches},
                     "source": source,
                     "engine_version": "0.18.0",
                 },
@@ -465,6 +601,7 @@ class WorkbenchStore:
             record["preview_url"] = (
                 f"/api/workbench/artifact/template/{template_id}/{record['revision']}/figure.png"
             )
+            output_previews(record, "template")
         return record
 
     def list_templates(self, project_id=None):
@@ -503,15 +640,13 @@ class WorkbenchStore:
                 "description": payload.get(
                     "description", payload.get("schema", {}).get("description", "")
                 ),
+                "outputs": payload.get("outputs") or [{"stem": "figure", "title": "图 1"}],
             }
             atomicio.write_bytes(target / "source.py", record["code"].encode("utf-8"))
             atomicio.write_json(target / "data.json", record["data"])
             atomicio.write_json(target / "record.json", record)
             if artifacts:
-                for filename in REVISION_ARTIFACTS:
-                    source = Path(artifacts) / filename
-                    if source.is_file():
-                        shutil.copy2(source, target / filename)
+                copy_artifacts(artifacts, target, record["outputs"])
             meta.update(
                 {
                     "name": name_of(payload["name"]),
@@ -588,7 +723,13 @@ class WorkbenchStore:
                 **extra,
             },
         )
-        shutil.move(str(resolved), str(target / "content"))
+        if extra.get("reference_only"):
+            # A legacy external project can contain user files at any level.
+            # Recycle its registration without guessing which files we own.
+            (target / "content").mkdir()
+            shutil.copy2(resolved / "project.json", target / "content/project.json")
+        else:
+            shutil.move(str(resolved), str(target / "content"))
         return target / "content"
 
     def delete_project(self, project_id):
@@ -598,11 +739,22 @@ class WorkbenchStore:
             backups = _document_backups(self.index_path)
             index = self._index()
             del index["projects"][project_id]
-            moved = self._trash("project", project_id, original, {"name": project["name"]})
+            managed = original == self.root / "projects" / project_id
+            reference_only = project.get("storage_layout") != "folder" and not managed
+            moved = self._trash(
+                "project",
+                project_id,
+                original,
+                {"name": project["name"], "reference_only": reference_only},
+            )
             try:
                 atomicio.write_json(self.index_path, index)
             except Exception as exc:
-                _rollback_move(moved, original, backups, exc)
+                if reference_only:
+                    _restore_documents(backups)
+                    moved.rename(moved.parent / "cancelled")
+                else:
+                    _rollback_move(moved, original, backups, exc)
                 raise
 
     def delete_plot(self, plot_id):
@@ -654,6 +806,19 @@ class WorkbenchStore:
             checked_id(item["entity_id"])
             destination = Path(item["original_path"]).resolve()
             manifest = self.index_path
+            if item["kind"] == "project" and item.get("reference_only"):
+                record = read_json(destination / "project.json")
+                if record.get("id") != item["entity_id"]:
+                    raise WorkbenchError("原位置的项目已改变，无法恢复", "restore_conflict", 409)
+                backups = _document_backups(manifest)
+                restored = path / "restored"
+                (path / "content").rename(restored)
+                try:
+                    self.open_project(destination)
+                except Exception as exc:
+                    _rollback_move(restored, path / "content", backups, exc)
+                    raise
+                return item
             if item["kind"] == "template":
                 destination = inside(self._library_dir(item.get("project_id")), item["entity_id"])
                 manifest = self._library_dir(item.get("project_id")) / "library.json"

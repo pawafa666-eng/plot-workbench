@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { PaletteContext } from '@/components/ui/PalettePicker'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -185,7 +186,7 @@ function Harness() {
   )
 }
 
-async function mount(gid: string) {
+async function mount(gid: string, palette = false) {
   useUiStore.setState({ elementPanelId: 'p1', selectedGids: [gid] })
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -195,7 +196,8 @@ async function mount(gid: string) {
   document.body.appendChild(svgHost)
   root = createRoot(host)
   await act(async () => {
-    root.render(<Harness />)
+    const palettes = [{ id: 'test', name: '试验配色', colors: ['#123456', '#ABCDEF'], created_at: '', updated_at: '' }]
+    root.render(palette ? <PaletteContext.Provider value={{ palettes, error: '' }}><Harness /></PaletteContext.Provider> : <Harness />)
   })
 }
 
@@ -285,6 +287,15 @@ afterEach(async () => {
 /* ============================ 支持预览的字段 ============================== */
 
 describe('线条颜色：改的那一刻 SVG 就变，后端等到手势结束', () => {
+  it('applies a saved palette swatch as one undoable line color edit', async () => {
+    await mount('axes_0.lines_0', true)
+    const row = rowByLabel('颜色')!
+    await act(async () => row.querySelector<HTMLButtonElement>('[data-palette-picker]')!.click())
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-palette-color="#ABCDEF"]')!.click())
+    expect(overrideOf('axes_0.lines_0', 'color')).toBe('#ABCDEF')
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(engineRender).toHaveBeenCalledTimes(1)
+  })
   it('取色过程中一次 engineRender 都没有，SVG 却已经是新颜色', async () => {
     await mount('axes_0.lines_0')
     const input = colorInput('颜色')

@@ -111,6 +111,7 @@ import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
+import { paletteMapName } from '../ui/PalettePicker'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -1857,7 +1858,7 @@ function BatchFieldRow({
         // 图形网格、图例位置仍是 3×3 网格。同一个属性在单选与多选下是同一种
         // 视觉语言——这是本轮的核心纪律（docs/ux/UX_CONSISTENCY_PASS.md）。
         // 取值不一致时传 null：一个格子都不标选中，也不把「空」当自定义值。
-        const v = mixed ? null : String(first ?? '')
+        const v = mixed ? null : field.prop === 'cmap' ? (paletteMapName(first) ?? String(first ?? '')) : String(first ?? '')
         const opts = field.options ?? []
         const kind = controlKindOf(elements[0].role, field)
         const picker = () => {
@@ -1885,6 +1886,7 @@ function BatchFieldRow({
                   value={v}
                   options={opts}
                   onChange={writeOnce}
+                  onCustomChange={writeOnce}
                   ariaLabel={label}
                   current={sharedCmapFacts(elements, 'cmap_current')}
                   original={sharedCmapFacts(elements, 'cmap_original')}
@@ -2178,7 +2180,7 @@ function FieldRow({
     </Row>
   )
 
-  const enumValue = String(value ?? '')
+  const enumValue = field.prop === 'cmap' ? (paletteMapName(value) ?? String(value ?? '')) : String(value ?? '')
   const enumOptions = field.options ?? []
   switch (kind) {
     case 'line-style':
@@ -2219,6 +2221,7 @@ function FieldRow({
           value={enumValue}
           options={enumOptions}
           onChange={writeOnce}
+          onCustomChange={writeOnce}
           ariaLabel={label}
           current={field.cmap_current}
           original={field.cmap_original}
@@ -2249,7 +2252,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
-          cmap={String(siblingValue('cmap') ?? '')}
+          cmap={paletteMapName(siblingValue('cmap')) ?? String(siblingValue('cmap') ?? '')}
           cmapFacts={siblingCmapFacts()}
         />,
       )
@@ -2260,7 +2263,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
-          cmap={String(siblingValue('cmap') ?? '')}
+          cmap={paletteMapName(siblingValue('cmap')) ?? String(siblingValue('cmap') ?? '')}
           cmapFacts={siblingCmapFacts()}
           orientation={colorbarOrientationOf(panel, element)}
         />,

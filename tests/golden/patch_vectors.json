@@ -744,6 +744,41 @@
       ],
       "canonical_json": "[{\"gid\":\"g\",\"identity\":\"x:unknown-scheme\",\"prop\":\"d\",\"value\":1}]",
       "hash": "sha256:d52fb4750f3cf5df3ae1ada38793569d093ed8cf1344407738093d29895f9e73"
+    },
+    {
+      "name": "workbench_palette_snapshot",
+      "description": "Custom palette map value must be canonical across Python and Rust",
+      "input": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": {
+            "kind": "workbench_palette_v1",
+            "mode": "continuous",
+            "colors": [
+              "#0000FF",
+              "#FF0000"
+            ]
+          }
+        }
+      ],
+      "canonical": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": {
+            "kind": "workbench_palette_v1",
+            "mode": "continuous",
+            "colors": [
+              "#0000FF",
+              "#FF0000"
+            ]
+          }
+        }
+      ],
+      "dropped": [],
+      "canonical_json": "[{\"gid\":\"axes_0.images_0\",\"prop\":\"cmap\",\"value\":{\"colors\":[\"#0000FF\",\"#FF0000\"],\"kind\":\"workbench_palette_v1\",\"mode\":\"continuous\"}}]",
+      "hash": "sha256:9652dbb8f65ba2bdc267fa175b2948166a9b7dab2cf3c9b62dab41ec297d227f"
     }
   ]
 }

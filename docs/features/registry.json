@@ -908,6 +908,20 @@
           "title": "Codex figure proposal preserves overrides through verified save and reopen"
         }
       ]
+    },
+    {
+      "id": "workbench.palettes",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "本地配色方案、渐变与图片取色，以及 Tavotto 线条和热图配色",
+        "en-US": "Local palettes, gradients and image sampling for Tavotto colors and heatmaps"
+      },
+      "entry": "配色表 → 创建方案；图内编辑 → 配色表",
+      "e2e": [
+        { "spec": "workbench-palette.spec.ts", "title": "creates, edits, interpolates and samples a local palette" },
+        { "spec": "workbench-palette.spec.ts", "title": "applies a saved palette to a heatmap and keeps it after verified save" }
+      ]
     }
   ]
 }

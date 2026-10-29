@@ -16,7 +16,7 @@ readme = "README.md"
 # 3.15 同样要先进矩阵再放开。
 requires-python = ">=3.10,<3.15"
 license = "AGPL-3.0-only"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "docs/workbench/ATTRIBUTION.txt"]
 authors = [{ name = "erwanjun" }]
 keywords = ["matplotlib", "figure", "layout", "publication", "pdf", "科研绘图"]
 classifiers = [

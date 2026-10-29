@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Popover } from '../../ui/Popover'
 import { colormapGradient } from './colormapStops'
 import { PickerTrigger } from './PickerTrigger'
+import { PalettePicker, type PaletteMap } from '@/components/ui/PalettePicker'
 
 /** 多选取值不一致时触发按钮上的占位文案（函数：常量会把语言定死在模块求值那一刻） */
 
@@ -23,7 +24,7 @@ const displayName = (name: string, facts?: ColormapFacts | null) =>
 
 const accessibleName = (name: string, facts?: ColormapFacts | null) =>
   facts?.custom || !colormapGradient(name, facts)
-    ? translate('control.customColormap', { ns: 'inspector', value: name })
+    ? translate('control.customColormap', { ns: 'inspector', value: name.startsWith('pwb1-') ? translate('control.customColormapName', { ns: 'inspector' }) : name })
     : name
 
 /**
@@ -87,6 +88,7 @@ export function ColormapPicker({
   current: currentFacts,
   original,
   onRestore,
+  onCustomChange,
 }: {
   /**
    * 当前值。**多选取值不一致时传 null**——那时一个格子都不该被标成选中，
@@ -103,12 +105,17 @@ export function ColormapPicker({
   original?: ColormapFacts | null
   /** 「脚本原样」那一格：清掉 override。没给就不出那一格 */
   onRestore?: () => void
+  onCustomChange?: (value: PaletteMap) => void
 }) {
   const [open, setOpen] = useState(false)
   // 事实只对得上名字才作数：override 刚写下、渲染还没回来的那一拍，`value` 已经是
   // 新名字而 manifest 里的事实还是上一张的，拿它画渐变条就是把上一张的色标画到
   // 新名字头上（还会把 viridis 叫成「自定义」）
-  const current = currentFacts && currentFacts.name === value ? currentFacts : null
+  const current = currentFacts && currentFacts.name === value
+    ? currentFacts
+    : value?.startsWith('pwb1-')
+      ? { name: value, custom: true, stops: [], discrete: value.startsWith('pwb1-discrete-') }
+      : null
   const entries: Entry[] = []
   if (original && onRestore) {
     entries.push({
@@ -141,7 +148,7 @@ export function ColormapPicker({
   const originalTag = translate('control.scriptOriginal', { ns: 'inspector' })
 
   return (
-    <Popover
+    <><Popover
       // 弹层宽 = 触发器宽（打磨 E11）：上下相邻的「线型」「标记」此前一个 216、
       // 一个 228，两种宽度挨在一起；Select 的弹层一直是跟着触发器的
       width="trigger"
@@ -154,7 +161,7 @@ export function ColormapPicker({
           mixed={value === null}
           mono={!current?.custom}
           data-cmap-custom={current?.custom ? 'true' : undefined}
-          textTitle={value !== null && current?.custom ? value : undefined}
+          textTitle={value !== null && current?.custom && !value.startsWith('pwb1-') ? value : undefined}
           preview={
             value !== null && <GradientBar name={value} facts={current} className="w-12 shrink-0" />
           }
@@ -214,6 +221,6 @@ export function ColormapPicker({
           )
         })}
       </div>
-    </Popover>
+    </Popover>{onCustomChange && <PalettePicker onMap={onCustomChange} />}</>
   )
 }

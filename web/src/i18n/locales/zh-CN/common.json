@@ -10,6 +10,16 @@
     "reload": "重新加载",
     "save": "保存"
   },
+  "palettePicker": {
+    "title": "配色表",
+    "empty": "暂无配色方案",
+    "choose": "选择配色方案",
+    "mode": "色图方式",
+    "continuous": "连续渐变",
+    "discrete": "分段色块",
+    "apply": "应用配色",
+    "tooFew": "色图至少需要两个颜色"
+  },
   "colorField": {
     "picker": "{{label}}：取色盘",
     "none": "无"

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { ElementInspector } from '@/components/inspector/ElementInspector'
 import { Button, IconButton } from '@/components/ui/Button'
+import { PaletteContext } from '@/components/ui/PalettePicker'
 import { FileCodeCorner, Redo2, Undo2 } from '@/components/ui/icons'
 import { seedEmbeddedSession, type EmbeddedFigure } from '@/embedded/session'
 import { useEngineSync } from '@/hooks/useEngineSync'
@@ -16,7 +17,8 @@ import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { PanelObject, PanelOverride } from '@/types/document'
-import { errorText, post, type Plot, type Snapshot } from './api'
+import { api, errorText, post, type Plot, type Snapshot } from './api'
+import type { Palette } from './paletteModel'
 import { DEFAULT_SCHEMA, type Schema } from './model'
 import { CodeAssistant, type AssistantRun } from './CodeAssistant'
 import { useAssistantBinding, type AssistantSource } from './AssistantHost'
@@ -32,6 +34,13 @@ export function TavottoEditor({ session, resumePatches, data = null, schema = DE
   const [panelId, setPanelId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [palettes, setPalettes] = useState<Palette[]>([])
+  const [paletteError, setPaletteError] = useState('')
+  useEffect(() => {
+    let live = true
+    void api<{ palettes: Palette[] }>('/palettes').then((result) => { if (live) setPalettes(result.palettes ?? []) }).catch((err) => { if (live) setPaletteError(errorText(err)) })
+    return () => { live = false }
+  }, [])
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => { setBusy(false); setError('') }, [session])
   useEffect(() => {
@@ -73,7 +82,7 @@ export function TavottoEditor({ session, resumePatches, data = null, schema = DE
     } finally { if (alive.current && liveSession.current === source) setBusy(false) }
   }
   if (!panelId) return <div className="wb-loading">正在准备 Tavotto 画布…</div>
-  return <EmbeddedCanvas panelId={panelId} sessionId={currentSession.session_id} data={data} schema={schema} busy={busy} error={error} targetLabel={targetLabel} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onApplyAssistant={applyAssistant} onFinish={async () => {
+  return <PaletteContext.Provider value={{ palettes, error: paletteError }}><EmbeddedCanvas panelId={panelId} sessionId={currentSession.session_id} data={data} schema={schema} busy={busy} error={error} targetLabel={targetLabel} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onApplyAssistant={applyAssistant} onFinish={async () => {
     setBusy(true); setError('')
     try {
       const panel = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId)
@@ -85,7 +94,7 @@ export function TavottoEditor({ session, resumePatches, data = null, schema = DE
     setBusy(true); setError('')
     try { await post(`/sessions/${currentSession.session_id}/cancel`); onCancel() }
     catch (e) { setError(errorText(e)) } finally { setBusy(false) }
-  }} />
+  }} /></PaletteContext.Provider>
 }
 function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApplyAssistant, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard }: { panelId: string; sessionId: string; data: Snapshot | null; schema: Schema; busy: boolean; error: string; onApplyAssistant: (result: AssistantRun, patches: PanelOverride[], sourcePanelId: string) => Promise<void>; onFinish: () => Promise<void>; onCancel: () => Promise<void>; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const [assistantOpen, setAssistantOpen] = useState(false)

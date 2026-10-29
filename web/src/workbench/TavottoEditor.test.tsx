@@ -91,7 +91,7 @@ it('rejects an old assistant callback after switching to another session', async
   const oldApply = assistant.props!.onApply
   await render({ ...session, session_id: 'session-two', stem: 'another' })
   await act(async () => { await expect(oldApply(generated)).rejects.toThrow('图形会话已经变化') })
-  expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/assistant/'))).toBe(false)
   expect((useDocumentStore.getState().doc.objects[0] as PanelObject).fileId).toBe('another.pdf')
   expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(false)
 })

@@ -12,6 +12,7 @@ import {
 import { t } from '@/i18n'
 import { DURATION } from '@/lib/motion'
 import { cn } from '@/lib/utils'
+import { PalettePicker } from './PalettePicker'
 import {
   FIELD_BOX as BOX_CLASS,
   FIELD_DISABLED as BOX_DISABLED,
@@ -511,6 +512,7 @@ export function ColorField({
           className="absolute inset-0 opacity-0"
         />
       </div>
+      <PalettePicker onColor={(color) => { onChange(color); onGestureEnd?.() }} />
     </div>
   )
 }

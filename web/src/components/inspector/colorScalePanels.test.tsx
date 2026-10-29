@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { PaletteContext } from '@/components/ui/PalettePicker'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -147,7 +148,7 @@ function Harness() {
 
 async function mount(
   gid: string,
-  opts: { overrides?: PanelObject['overrides']; manifest?: Manifest } = {},
+  opts: { overrides?: PanelObject['overrides']; manifest?: Manifest; palette?: boolean } = {},
 ) {
   const { overrides = [], manifest = manifestOf() } = opts
   engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
@@ -176,7 +177,8 @@ async function mount(
   document.body.appendChild(svgHost)
   root = createRoot(host)
   await act(async () => {
-    root.render(<Harness />)
+    const palettes = [{ id: 'test', name: '试验配色', colors: ['#123456', '#ABCDEF'], created_at: '', updated_at: '' }]
+    root.render(opts.palette ? <PaletteContext.Provider value={{ palettes, error: '' }}><Harness /></PaletteContext.Provider> : <Harness />)
   })
 }
 
@@ -527,6 +529,23 @@ const withElements = (...els: ManifestElement[]): Manifest =>
 const cmapTrigger = () => rowOf('cmap')!.querySelector('button[aria-label="色图"]') as HTMLButtonElement
 const cmapEntries = () =>
   Array.from(document.querySelectorAll('[role="radiogroup"][aria-label="色图"] [role="radio"]')) as HTMLElement[]
+
+it('writes a complete palette snapshot when the user applies a heatmap palette', async () => {
+  await mount('axes_0.images_0', { palette: true })
+  await click(rowOf('cmap')?.querySelector('[data-palette-picker]'))
+  await click([...document.querySelectorAll('button')].find((button) => button.textContent === '应用配色'))
+  expect(overrideOf('axes_0.images_0', 'cmap')).toEqual({ kind: 'workbench_palette_v1', mode: 'continuous', colors: ['#123456', '#ABCDEF'] })
+})
+
+it('does not present the previous palette while the new palette is still rendering', async () => {
+  const previous = { name: 'pwb1-continuous-FF00000000FF', custom: true, stops: ['#FF0000', '#0000FF'], discrete: false }
+  const pending = { kind: 'workbench_palette_v1', mode: 'continuous', colors: ['#00FF00', '#000000'] }
+  await mount('axes_0.images_0', { overrides: [{ gid: 'axes_0.images_0', prop: 'cmap', value: pending }], manifest: withElements(customImage({ value: previous.name, cmap_current: previous }), colorbarEl()) })
+  const trigger = cmapTrigger()
+  expect(trigger.textContent).toContain('自定义')
+  expect(trigger.textContent).not.toContain('pwb1-')
+  expect(trigger.querySelector('[data-cmap-gradient]')).toBeNull()
+})
 
 describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from_list）', () => {
   it('触发按钮说「自定义」而不是 from_list，渐变条按引擎给的三格硬边画', async () => {

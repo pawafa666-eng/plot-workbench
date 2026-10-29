@@ -18,6 +18,7 @@ from tavotto.engine import atomicio, config
 
 from . import VERSION, data as table_data
 from .data_process import run_operation
+from .palettes import PaletteStore
 from .rendering import RenderService
 from .store import WorkbenchError, WorkbenchStore, checked_id, inside
 
@@ -35,6 +36,7 @@ class WorkbenchManager:
         selected = Path(root).expanduser() if root is not None else self._saved_root()
         self.root = selected.resolve()
         self.store = WorkbenchStore(self.root)
+        self.palettes = PaletteStore(self.root)
         self.service = RenderService(self.store)
         self.tables: dict[str, tuple[float, table_data.ParsedTable]] = {}
         self.lock = threading.RLock()
@@ -59,6 +61,7 @@ class WorkbenchManager:
             self.tables.clear()
             self.root = target
             self.store = WorkbenchStore(target)
+            self.palettes = PaletteStore(target)
             self.service = RenderService(self.store)
             atomicio.write_json(self.preference, {"root": str(target), "schema_version": 1})
             return self.status()
@@ -167,6 +170,23 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.get("/projects")
     def projects():
         return jsonify({"projects": manager.store.list_projects()})
+
+    @bp.get("/palettes")
+    def palettes():
+        return jsonify({"palettes": manager.palettes.list()})
+
+    @bp.post("/palettes")
+    def create_palette():
+        return jsonify(manager.palettes.save(_body()))
+
+    @bp.put("/palettes/<palette_id>")
+    def update_palette(palette_id):
+        return jsonify(manager.palettes.save(_body(), palette_id))
+
+    @bp.delete("/palettes/<palette_id>")
+    def delete_palette(palette_id):
+        manager.palettes.delete(palette_id)
+        return jsonify({"ok": True})
 
     @bp.post("/projects")
     def create_project():

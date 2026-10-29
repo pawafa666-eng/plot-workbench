@@ -30,6 +30,7 @@ function deterministicCodex(testInfo: TestInfo): Record<string, string> {
   writeFileSync(path.join(directory, 'sitecustomize.py'), `from pathlib import Path
 import copy
 import difflib
+import time
 import uuid
 from tavotto.engine import ai_bridge
 
@@ -68,6 +69,16 @@ def _run(*, script, figures_dir, **kwargs):
 
 ai_bridge.capabilities = _capabilities
 ai_bridge.run = _run
+_original_get = ai_bridge.get
+_seen = {}
+def _get(sid):
+    session = _original_get(sid)
+    if session and session.get("agent") == "codex":
+        first = _seen.setdefault(sid, time.monotonic())
+        if time.monotonic() - first < 2:
+            return {**session, "status": "running"}
+    return session
+ai_bridge.get = _get
 `, 'utf-8')
   return { PYTHONPATH: [directory, path.join(REPO, 'src'), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) }
 }
@@ -112,7 +123,7 @@ async function expectUsable(page: Page, locator: Locator) {
   })).toBe(true)
 }
 
-async function propose(page: Page, entry: string) {
+async function propose(page: Page, entry: string, duringRun?: () => Promise<void>) {
   const trigger = page.locator(entry)
   await expectUsable(page, trigger)
   await expect(trigger).toBeEnabled()
@@ -132,9 +143,11 @@ async function propose(page: Page, entry: string) {
   await expect(start).toBeEnabled()
   await expectUsable(page, start)
   await start.click()
+  if (duringRun) await duringRun()
   await expect(page.locator('[data-wb-assistant-message="assistant"]').last()).toContainText(REPLY)
-  await page.locator('[data-wb-assistant-diff-toggle]').click()
-  await expect(page.locator('[data-wb-assistant-diff]')).toContainText(TITLE)
+  await page.locator('[data-wb-assistant-preview]').click()
+  await expectLoadedImage(page.locator('[data-wb-assistant-before]'))
+  await expectLoadedImage(page.locator('[data-wb-assistant-after]'))
   // Continue in the same staged draft before applying it to the real editor.
   const followup = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/assistant/runs'))
   await prompt.fill('保留上一轮草稿，请简要解释改动。')
@@ -143,12 +156,11 @@ async function propose(page: Page, entry: string) {
   expect(body.parent_id).toBeTruthy()
   expect(body.history.map((item: { role: string }) => item.role)).toEqual(['user', 'assistant'])
   await expect(page.locator('[data-wb-assistant-message="assistant"]')).toHaveCount(2)
-  await expect(page.locator('[data-wb-assistant-apply]')).toBeEnabled()
-  await page.locator('[data-wb-assistant-diff-toggle]').click()
-  await expect(page.locator('[data-wb-assistant-diff]')).toContainText(TITLE)
-  await page.locator('[data-wb-assistant-diff-toggle]').click()
-  await expect(page.locator('[data-wb-assistant-diff]')).toHaveCount(0)
-  await expect(page.locator('[data-wb-assistant-apply]')).toBeEnabled()
+  await expect(page.locator('[data-wb-assistant-preview]')).toBeEnabled()
+  await page.locator('[data-wb-assistant-preview]').click()
+  await expectLoadedImage(page.locator('[data-wb-assistant-before]'))
+  await expectLoadedImage(page.locator('[data-wb-assistant-after]'))
+  await expect(page.locator('[data-wb-assistant-apply]')).toBeEnabled({ timeout: 90_000 })
 }
 
 async function expectLoadedImage(image: Locator) {
@@ -183,7 +195,24 @@ test('Codex template proposal requires application and fresh validation before s
   await expect(save).toBeEnabled({ timeout: 90_000 })
   await expectLoadedImage(page.locator('[data-wb-preview-image]'))
   const previousPreview = await page.locator('[data-wb-preview-image]').getAttribute('src')
-  await propose(page, '[data-wb-template-assistant]')
+  const name = page.getByLabel('模板名称')
+  await name.fill('原始模板草稿')
+  page.on('dialog', (dialog) => void dialog.accept())
+  await propose(page, '[data-wb-template-assistant]', async () => {
+    await page.locator('[data-wb-assistant-close]').click()
+    await page.locator('[data-wb-nav-home]').click()
+    await page.locator('[data-wb-nav-templates]').click()
+    await page.locator('[data-wb-template-create]').click()
+    await expect(page.getByLabel('模板名称')).toHaveValue('未命名模板')
+    const notification = page.locator('[data-wb-assistant-notification]')
+    await expect(notification).toContainText('Codex 已完成', { timeout: 30_000 })
+    await notification.getByText('查看对话').click()
+    await expect(page.locator('[data-wb-assistant-apply]')).toBeDisabled()
+    await page.locator('[data-wb-assistant-return]').click()
+    await expect(page.getByLabel('模板名称')).toHaveValue('原始模板草稿')
+    await expect(page.locator('[data-wb-code]')).toHaveValue(originalCode)
+    await page.locator('[data-wb-template-assistant]').click()
+  })
   await page.screenshot({ path: testInfo.outputPath('codex-proposal.png') })
   await expect(code).toHaveValue(originalCode)
   const apply = page.locator('[data-wb-assistant-apply]')
@@ -219,6 +248,7 @@ test('Codex figure proposal preserves overrides through verified save and reopen
   mkdirSync(directory, { recursive: true })
   const project = await post<{ id: string }>(page.request, instance.baseURL, '/projects', { name: 'Codex browser project', path: directory })
   const plot = await post<{ id: string }>(page.request, instance.baseURL, `/projects/${project.id}/plots`, { name: 'Two figures' })
+  const other = await post<{ id: string }>(page.request, instance.baseURL, `/projects/${project.id}/plots`, { name: 'Another plot' })
   const started = await post<{ job_id: string }>(page.request, instance.baseURL, `/plots/${plot.id}/render`, { code: CODE, data: null, schema: SCHEMA })
   await expect.poll(async () => (await get<{ status: string }>(page.request, instance.baseURL, `/jobs/${started.job_id}`)).status, { timeout: 90_000 }).toBe('success')
   await post(page.request, instance.baseURL, `/plots/${plot.id}/save`, { run_id: started.job_id })
@@ -236,7 +266,41 @@ test('Codex figure proposal preserves overrides through verified save and reopen
   const oldTitle = await expectPaintedLabel(svg, 'axes_0.title', 'Before Codex two')
   await expectPaintedLabel(svg, 'axes_0.xlabel', 'Retained browser label')
   const beforeTitlePixels = await oldTitle.screenshot()
-  await propose(page, '[data-wb-tavotto-assistant]')
+  const cancelled: string[] = []
+  page.on('request', (request) => { if (request.url().includes('/assistant/runs/') && request.url().endsWith('/cancel')) cancelled.push(request.url()) })
+  page.on('dialog', (dialog) => void dialog.accept())
+  await propose(page, '[data-wb-tavotto-assistant]', async () => {
+    await page.locator('[data-wb-assistant-close]').click()
+    await expect(page.locator('[data-dialog="workbench-code-assistant"]')).toHaveCount(0)
+    await page.locator(`[data-wb-project-nav="${project.id}"]`).click()
+    await page.locator(`[data-wb-plot-card="${other.id}"]`).getByText('打开图').click()
+    await expect(page.locator('[data-wb-plot-editor]')).toContainText('Another plot')
+    const notification = page.locator('[data-wb-assistant-notification]')
+    await expect(notification).toContainText('Codex 已完成', { timeout: 30_000 })
+    await notification.getByText('查看对话').click()
+    await expect(page.locator('[data-wb-assistant-apply]')).toBeDisabled()
+    let releaseResume!: () => void
+    let sawResume!: () => void
+    const pendingResume = new Promise<void>((resolve) => { releaseResume = resolve })
+    const intercepted = new Promise<void>((resolve) => { sawResume = resolve })
+    const resumeRoute = async (route: import('@playwright/test').Route) => { sawResume(); await pendingResume; await route.continue() }
+    await page.route('**/api/workbench/sessions/*/resume', resumeRoute)
+    await page.locator('[data-wb-assistant-return]').click()
+    await intercepted
+    await page.locator('[data-wb-code-toggle]').click()
+    await page.locator('[data-wb-code]').fill('print("newer unsaved edit")')
+    releaseResume()
+    await expect(page.locator('[data-wb-global-error]')).toContainText('当前页面在返回期间发生变化')
+    await expect(page.locator('[data-wb-code]')).toHaveValue('print("newer unsaved edit")')
+    await page.unroute('**/api/workbench/sessions/*/resume', resumeRoute)
+    await notification.getByText('查看对话').click()
+    await page.locator('[data-wb-assistant-return]').click()
+    await expect(page.locator('[data-wb-tavotto]')).toBeVisible({ timeout: 90_000 })
+    await page.locator('[data-wb-tavotto-assistant]').click()
+    expect(cancelled).toEqual([])
+  })
+  await expect(page.locator('[data-wb-assistant-figure]')).toHaveCount(2)
+  await expect(page.locator('[data-wb-assistant-figure]').first()).toHaveAttribute('data-wb-assistant-figure', 'figure_2')
   await page.screenshot({ path: testInfo.outputPath('codex-proposal.png') })
   const apply = page.locator('[data-wb-assistant-apply]')
   await expectUsable(page, apply)
@@ -253,6 +317,7 @@ test('Codex figure proposal preserves overrides through verified save and reopen
   await expectUsable(page, finish)
   await finish.click()
   await expect(page.locator('[data-wb-plot-editor]')).toBeVisible({ timeout: 90_000 })
+  await expect(page.locator('[data-wb-output="figure_2"]')).toHaveAttribute('aria-selected', 'true')
   const saved = await get<{ revision: number; base_code: string; outputs: { stem: string }[]; output_overrides: Record<string, unknown[]> }>(page.request, instance.baseURL, `/plots/${plot.id}`)
   expect(saved.revision).toBe(before.revision + 1)
   expect(saved.base_code).toContain(TITLE)

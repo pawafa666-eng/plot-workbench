@@ -113,6 +113,8 @@ it('invalidates template validation when the user applies a Codex proposal', asy
   })
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-start]')!.click())
   expect(document.querySelector<HTMLTextAreaElement>('[data-wb-code]')!.value).not.toBe('new template code')
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-assistant-apply]')!.disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-preview]')!.click())
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-apply]')!.click())
   expect(document.querySelector<HTMLTextAreaElement>('[data-wb-code]')!.value).toBe('new template code')
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)

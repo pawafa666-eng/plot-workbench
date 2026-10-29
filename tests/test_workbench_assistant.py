@@ -312,7 +312,42 @@ def test_tavotto_proposals_preserve_overrides_verify_every_output_and_reopen(
         with pytest.raises(WorkbenchError, match="数据"):
             service.apply_assistant(sid, changed_input, latest_patches)
         task_id = propose(changed, latest_patches)
-        applied = service.apply_assistant(sid, task_id, latest_patches)
+        with pytest.raises(WorkbenchError, match="预览"):
+            service.apply_assistant(sid, task_id, latest_patches, require_preview=True)
+        resumed = service.resume_session(sid, latest_patches)
+        assert resumed["session_id"] == sid and resumed["overrides"] == latest_patches
+        assert service.resume_session(sid, patches)["overrides"] == latest_patches
+        candidate_parent = Path(service._session(sid)["directory"]).parent
+        before_directories = {item.name for item in candidate_parent.iterdir()}
+        comparison = service.preview_assistant(sid, task_id, latest_patches)
+        assert {item.name for item in candidate_parent.iterdir()} == before_directories
+        assert comparison["before_image"].startswith("data:image/png;base64,")
+        assert comparison["after_image"].startswith("data:image/png;base64,")
+        assert comparison["before_image"] != comparison["after_image"]
+        assert [figure["stem"] for figure in comparison["figures"]] == ["figure", "figure_2"]
+        assert all(
+            figure["before_image"] != figure["after_image"] for figure in comparison["figures"]
+        )
+        assert service._session(sid) is before
+        assert "Original A" in service.session_render(sid, latest_patches)["svg"]
+        assert store.get_plot(plot["id"])["revision"] == saved["revision"]
+        with monkeypatch.context() as changed_pixels:
+            real_preview = service._assistant_preview_image
+            changed_pixels.setattr(
+                service,
+                "_assistant_preview_image",
+                lambda current, values, stem=None: (
+                    "different image" if stem == "figure_2" else real_preview(current, values, stem)
+                ),
+            )
+            with pytest.raises(WorkbenchError, match="预览"):
+                service.apply_assistant(sid, task_id, latest_patches, require_preview=True)
+        assert {item.name for item in candidate_parent.iterdir()} == before_directories
+        assert "Original A" in service.session_render(sid, latest_patches)["svg"]
+        retired_directory = Path(service._session(sid)["directory"])
+        applied = service.apply_assistant(sid, task_id, latest_patches, require_preview=True)
+        assert not retired_directory.exists()
+        assert Path(service._session(sid)["directory"]).is_dir()
         assert service._session(sid) is before
         assert applied["session_id"] == sid and applied["overrides"] == latest_patches
         assert "Changed A" in applied["svg"]
@@ -362,8 +397,9 @@ def test_commit_tavotto_rejects_a_revision_changed_during_verification(tmp_path)
 
 
 @pytest.mark.parametrize("close_service", [False, True])
+@pytest.mark.parametrize("phase", ["build", "preview_proof"])
 def test_cancel_or_root_close_during_candidate_build_cannot_resurrect_a_session(
-    tmp_path, monkeypatch, close_service
+    tmp_path, monkeypatch, close_service, phase
 ):
     store = WorkbenchStore(tmp_path / "library")
     project = store.create_project("P")
@@ -393,10 +429,11 @@ def test_cancel_or_root_close_during_candidate_build_cannot_resurrect_a_session(
         def ensure_built(self):
             # Simulate the cancellation/close transition at the exact boundary
             # after apply captured its candidate, before candidate acceptance.
-            if close_service:
-                service.close()
-            else:
-                service.cancel_session("session")
+            if phase == "build":
+                if close_service:
+                    service.close()
+                else:
+                    service.cancel_session("session")
             return {"stems": {"figure": {}}}
 
         def override(self, *args, **kwargs):
@@ -404,8 +441,23 @@ def test_cancel_or_root_close_during_candidate_build_cannot_resurrect_a_session(
 
     candidate = Candidate()
     monkeypatch.setattr(service, "_session_worker", lambda value: candidate)
+    if phase == "preview_proof":
+        image = "proof-image"
+        service.assistant_previews[("session", "task")] = (
+            service._assistant_token(session, []),
+            service._assistant_images_digest([{"stem": "figure", "after_image": image}]),
+        )
+
+        def close_during_preview(*args):
+            if close_service:
+                service.close()
+            else:
+                service.cancel_session("session")
+            return image
+
+        monkeypatch.setattr(service, "_assistant_preview_image", close_during_preview)
     with pytest.raises(WorkbenchError, match="结束"):
-        service.apply_assistant("session", "task", [])
+        service.apply_assistant("session", "task", [], require_preview=phase == "preview_proof")
     assert session["closed"] is True
     assert session["worker"] is original_worker
     assert candidate in discarded

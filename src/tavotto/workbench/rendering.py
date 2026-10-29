@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -133,6 +135,7 @@ class RenderService:
         self.jobs = {}
         self.latest = {}
         self.sessions = {}
+        self.assistant_previews = {}
         self.assistant = AssistantService(self.root / "assistant")
         self.closed = False
 
@@ -554,7 +557,19 @@ def main():
         histories[session["stem"]] = copy.deepcopy(patches)
         return histories
 
-    def apply_assistant(self, sid, task_id, patches):
+    def preview_assistant(self, sid, task_id, patches):
+        return self.apply_assistant(sid, task_id, patches, preview_only=True)
+
+    def resume_session(self, sid, patches):
+        session = self._session(sid)
+        with session["lock"]:
+            self._session(sid)
+            if self.store.get_plot(session["plot_id"])["revision"] != session["revision"]:
+                raise WorkbenchError("子图已发生变化，请重新打开编辑会话", "stale_session", 409)
+            # Return the authoritative render; the caller can replay its own draft.
+            return self._session_payload(session)
+
+    def apply_assistant(self, sid, task_id, patches, *, preview_only=False, require_preview=False):
         session = self._session(sid)
         with session["lock"]:
             self._session(sid)
@@ -567,15 +582,23 @@ def main():
             code = self.assistant.proposal(
                 task_id, owner=sid, token=self._assistant_token(session, patches)
             )
+            if require_preview:
+                proof = self.assistant_previews.get((sid, task_id))
+                if not proof or proof[0] != self._assistant_token(session, patches):
+                    raise WorkbenchError("请先运行图形预览", "assistant_preview_required", 409)
             if code == session["plot"].get("base_code", session["plot"]["code"]):
+                if preview_only:
+                    image = self._assistant_preview_image(session, patches)
+                    return {"before_image": image, "after_image": image}
                 return self._session_payload(session)
             candidate = {**session, "plot": copy.deepcopy(session["plot"])}
             candidate["plot"]["base_code"] = code
             directory = Path(session["directory"]).parent / uuid.uuid4().hex
-            candidate["directory"] = str(self._adapter(candidate["plot"], directory))
-            worker = self._session_worker(candidate)
-            candidate["worker"] = worker
+            worker = None
             try:
+                candidate["directory"] = str(self._adapter(candidate["plot"], directory))
+                worker = self._session_worker(candidate)
+                candidate["worker"] = worker
                 histories = self._session_histories(candidate, patches)
                 built = worker.ensure_built()
                 self._check_assistant_inputs(session, built)
@@ -595,22 +618,98 @@ def main():
                 # A root close can start while this lock is held. Never accept
                 # a candidate from that closed service/session generation.
                 self._session(sid)
+                if preview_only:
+                    figures = [
+                        {
+                            "stem": stem,
+                            "before_image": self._assistant_preview_image(session, history, stem),
+                            "after_image": self._assistant_preview_image(candidate, history, stem),
+                        }
+                        for stem, history in histories.items()
+                    ]
+                    figures.sort(key=lambda item: item["stem"] != session["stem"])
+                    selected = next(item for item in figures if item["stem"] == session["stem"])
+                    comparison = {**selected, "figures": figures}
+                elif require_preview:
+                    proof = self.assistant_previews.get((sid, task_id))
+                    images = [
+                        {
+                            "stem": stem,
+                            "after_image": self._assistant_preview_image(candidate, history, stem),
+                        }
+                        for stem, history in histories.items()
+                    ]
+                    digest = self._assistant_images_digest(images)
+                    if not proof or proof != (self._assistant_token(session, patches), digest):
+                        raise WorkbenchError(
+                            "本次运行的图形与预览不同，未应用；请重新运行预览。",
+                            "assistant_preview_changed",
+                            409,
+                        )
+                # Preview rendering and proof checks can be long-running.
+                # A root switch may close the service while they run.
+                self._session(sid)
             except pool.WorkerError as exc:
-                pool.discard(worker)
+                self._discard_assistant_candidate(worker, directory)
                 raise WorkbenchError(
                     f"Codex 候选代码无法运行，未应用：{exc}", "assistant_render_failed", 409
                 ) from exc
             except BaseException:
-                pool.discard(worker)
+                self._discard_assistant_candidate(worker, directory)
                 raise
+            if preview_only:
+                self._discard_assistant_candidate(worker, directory)
+                if len(self.assistant_previews) >= 24:
+                    self.assistant_previews.pop(next(iter(self.assistant_previews)))
+                self.assistant_previews[(sid, task_id)] = (
+                    self._assistant_token(session, patches),
+                    self._assistant_images_digest(comparison["figures"]),
+                )
+                return comparison
             candidate["code_changed"] = True
             candidate["code_generation"] = session.get("code_generation", 0) + 1
             previous_worker = session["worker"]
+            previous_directory = Path(session["directory"])
             # Queued render/preview requests may already hold this dict and lock.
             # Keep its identity so they observe the accepted candidate worker.
             session.update(candidate)
-            pool.discard(previous_worker)
+            try:
+                self._discard_assistant_candidate(previous_worker, previous_directory)
+            except (OSError, WorkbenchError):
+                # The candidate has already been accepted; a cleanup failure
+                # must not falsely report that the transaction was rejected.
+                logging.getLogger(__name__).warning(
+                    "Unable to remove a retired assistant session directory", exc_info=True
+                )
             return self._session_payload(session)
+
+    @staticmethod
+    def _discard_assistant_candidate(worker, directory):
+        # Only the fresh UUID child we created is eligible for removal.
+        if worker is not None:
+            pool.discard(worker)
+        directory = Path(directory)
+        if directory.is_symlink() or not re.fullmatch(r"[0-9a-f]{32}", directory.name):
+            raise WorkbenchError("无法安全清理 Codex 预览目录", "assistant_cleanup_failed", 500)
+        if directory.exists():
+            shutil.rmtree(directory)
+
+    @staticmethod
+    def _assistant_preview_image(session, patches, stem=None):
+        path = session["worker"].preview_png(
+            stem or session["stem"], patches, 1200, uuid.uuid4().hex
+        )
+        return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+
+    @staticmethod
+    def _assistant_images_digest(figures):
+        digest = hashlib.sha256()
+        for item in sorted(figures, key=lambda value: value["stem"]):
+            digest.update(item["stem"].encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(item["after_image"].encode("ascii"))
+            digest.update(b"\0")
+        return digest.hexdigest()
 
     def _check_assistant_inputs(self, session, built):
         # Keep Tavotto's frozen data contract. The worker's Python file observer

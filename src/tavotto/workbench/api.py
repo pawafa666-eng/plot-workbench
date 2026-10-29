@@ -461,9 +461,25 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.post("/sessions/<session_id>/assistant/<task_id>/apply")
     def apply_assistant(session_id, task_id):
+        body = _body()
         return jsonify(
-            manager.service.apply_assistant(session_id, task_id, _need(_body(), "patches"))
+            manager.service.apply_assistant(
+                session_id,
+                task_id,
+                _need(body, "patches"),
+                require_preview=body.get("require_preview") is True,
+            )
         )
+
+    @bp.post("/sessions/<session_id>/assistant/<task_id>/preview")
+    def preview_assistant(session_id, task_id):
+        return jsonify(
+            manager.service.preview_assistant(session_id, task_id, _need(_body(), "patches"))
+        )
+
+    @bp.post("/sessions/<session_id>/resume")
+    def resume_session(session_id):
+        return jsonify(manager.service.resume_session(session_id, _need(_body(), "patches")))
 
     @bp.post("/sessions/<session_id>/render")
     def render_session(session_id):

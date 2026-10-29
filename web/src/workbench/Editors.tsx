@@ -1,3 +1,4 @@
+import type { PanelOverride } from '@/types/document'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { TextInput } from '@/components/ui/Input'
@@ -6,14 +7,16 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Tab, TabList, TabPanel } from '@/components/ui/Tabs'
 import { BookOpen, ChevronDown, ChevronRight, Download, FileCodeCorner, Play, Save, Upload } from '@/components/ui/icons'
 import { isDesktop, pickDirectory, pickScriptFile } from '@/lib/desktop'
+import { newId } from '@/lib/id'
 import { DataTable, DataTransform, DataWizard } from './DataWizard'
-import { download, errorText, figureOutputs, patch, post, STARTER_CODE, type Category, type FigureOutput, type Plot, type Run, type Snapshot, type Template } from './api'
+import { api, download, errorText, figureOutputs, patch, post, STARTER_CODE, type Category, type FigureOutput, type Job, type Plot, type Run, type Snapshot, type Template } from './api'
 import { canCommitRun, DEFAULT_SCHEMA, fingerprintOf, schemaSummary, type Schema } from './model'
 import { TavottoEditor, type TavottoSession } from './TavottoEditor'
 import { useRenderJob } from './useRenderJob'
 import { CodeAssistant } from './CodeAssistant'
+import { useAssistantBinding, type AssistantSource, type TemplateAssistantDraft } from './AssistantHost'
 
-export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChange }: { initial: Plot; templates: Template[]; onChanged: (plot: Plot) => void; onBack: () => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChange, resumeSession, resumePatches, onReturnAssistant, onNavigationGuard }: { initial: Plot; templates: Template[]; onChanged: (plot: Plot) => void; onBack: () => void; onDirtyChange?: (dirty: boolean) => void; resumeSession?: TavottoSession; resumePatches?: PanelOverride[]; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const [plot, setPlot] = useState(initial)
   const [code, setCode] = useState(initial.code || STARTER_CODE)
   const [data, setData] = useState<Snapshot | null>(initial.data)
@@ -27,10 +30,10 @@ export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChang
   const [compatible, setCompatible] = useState<Template[]>([])
   const [checkingTemplates, setCheckingTemplates] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
-  const [session, setSession] = useState<TavottoSession | null>(null)
+  const [session, setSession] = useState<TavottoSession | null>(resumeSession ?? null)
   const [run, setRun] = useState<Run | null>(null)
   const [outputs, setOutputs] = useState(() => figureOutputs(initial))
-  const [selectedStem, setSelectedStem] = useState(() => figureOutputs(initial)[0]?.stem ?? 'figure')
+  const [selectedStem, setSelectedStem] = useState(() => resumeSession?.stem ?? figureOutputs(initial)[0]?.stem ?? 'figure')
   const selectedOutput = outputs.find((output) => output.stem === selectedStem) ?? outputs[0]
   const stem = selectedOutput?.stem ?? 'figure'
   const preview = selectedOutput?.preview_url ?? ''
@@ -106,7 +109,7 @@ export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChang
       setMessage(`已导入 ${file.name}。运行并保存后可导出代码包。`)
     }).catch((e) => setError(errorText(e)))
   }
-  if (session) return <TavottoEditor session={session} data={data} schema={schema} onFinish={acceptPlot} onCancel={() => setSession(null)} />
+  if (session) return <TavottoEditor session={session} resumePatches={resumePatches} targetLabel={`${plot.name} · ${session.stem}`} data={data} schema={schema} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onFinish={acceptPlot} onCancel={() => setSession(null)} />
   return <div className="wb-plot-editor" data-wb-plot-editor>
     <div className="wb-page-heading"><div><h1>{plot.name}</h1><p>{locked ? '已进入 Tavotto 编辑流程 · 代码、数据和模板只读' : '运行 Python 代码后保存结果。'}</p></div><div className="wb-toolbar"><Button onClick={() => { if (!dirty || window.confirm('当前代码或数据尚未保存，离开后将丢弃这些修改。')) onBack() }}>返回项目</Button><Button variant="secondary" disabled={!saved || saving} onClick={openTavotto} data-wb-open-tavotto>使用 Tavotto 继续编辑</Button><Button variant="primary" disabled={!saved || saving} onClick={() => setExportOpen(true)} data-wb-export><Download />导出</Button></div></div>
     <div className="wb-editor-bar"><div className="wb-toolbar"><input ref={codeFileRef} hidden type="file" accept=".py" data-wb-plot-code-upload onChange={(e) => { acceptCodeFile(e.target.files?.[0]); e.currentTarget.value = '' }} /><Button active={codeOpen} onClick={() => setCodeOpen(!codeOpen)} data-wb-code-toggle>{codeOpen ? <ChevronDown /> : <ChevronRight />}<FileCodeCorner />Python 代码</Button><Button disabled={locked || jobs.busy} onClick={() => void importCode()}><Upload />导入代码</Button><Button disabled={locked || jobs.busy} onClick={() => setImportOpen(true)}><Upload />导入数据</Button><Button active={dataOpen} disabled={!data} onClick={() => setDataOpen(!dataOpen)}>数据 {data ? `${data.row_count} × ${data.column_count}` : ''}</Button><Button disabled={locked || jobs.busy} onClick={() => setPickerOpen(true)}><BookOpen />选择模板</Button></div><div className="wb-toolbar"><span className={`wb-status-dot ${dirty ? 'is-dirty' : ''}`}>{jobs.busy ? '正在运行' : dirty ? '有未保存修改' : '已保存'}</span>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" disabled={locked || saving} onClick={render} data-wb-run><Play />运行</Button>}<Button variant="primary" disabled={!current || saving || locked} loading={saving} onClick={save} data-wb-save><Save />保存</Button></div></div>
@@ -124,22 +127,26 @@ export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChang
   </div>
 }
 
-export function TemplateEditor({ initial, categories, projectId, defaultScope = 'global', onSaved, onBack, onDirtyChange }: { initial?: Template; categories: Category[]; projectId?: string; defaultScope?: 'global' | 'project'; onSaved: (template: Template) => void; onBack: () => void; onDirtyChange?: (dirty: boolean) => void }) {
-  const [name, setName] = useState(initial?.name ?? '未命名模板')
-  const [code, setCode] = useState(initial?.code ?? STARTER_CODE)
-  const [data, setData] = useState<Snapshot | null>(initial?.data ?? null)
-  const [schema, setSchema] = useState<Schema>(initial?.schema ?? DEFAULT_SCHEMA)
-  const [scope, setScope] = useState<'global' | 'project'>(initial?.scope ?? defaultScope)
-  const [categoryId, setCategoryId] = useState(initial?.category_id ?? 'uncategorized')
-  const [outputs, setOutputs] = useState(() => initial ? figureOutputs(initial) : [])
-  const [selectedStem, setSelectedStem] = useState(() => initial ? figureOutputs(initial)[0]?.stem ?? 'figure' : 'figure')
+export type TemplateResume = TemplateAssistantDraft & { code: string; data: Snapshot | null; schema: Schema }
+export function TemplateEditor({ initial, categories, projectId, defaultScope = 'global', onSaved, onBack, onDirtyChange, resume, onReturnAssistant }: { initial?: Template; categories: Category[]; projectId?: string; defaultScope?: 'global' | 'project'; onSaved: (template: Template) => void; onBack: () => void; onDirtyChange?: (dirty: boolean) => void; resume?: TemplateResume; onReturnAssistant?: (source: AssistantSource) => void | Promise<void> }) {
+  const [assistantKey] = useState(() => resume?.assistantKey ?? newId('template-draft'))
+  const [name, setName] = useState(resume?.name ?? initial?.name ?? '未命名模板')
+  const [code, setCode] = useState(resume?.code ?? initial?.code ?? STARTER_CODE)
+  const [data, setData] = useState<Snapshot | null>(resume ? resume.data : initial?.data ?? null)
+  const [schema, setSchema] = useState<Schema>(resume?.schema ?? initial?.schema ?? DEFAULT_SCHEMA)
+  const [scope, setScope] = useState<'global' | 'project'>(resume?.scope ?? initial?.scope ?? defaultScope)
+  const [categoryId, setCategoryId] = useState(resume?.categoryId ?? initial?.category_id ?? 'uncategorized')
+  const [outputs, setOutputs] = useState(() => resume?.outputs ?? (initial ? figureOutputs(initial) : []))
+  const [selectedStem, setSelectedStem] = useState(() => resume?.selectedStem ?? (initial ? figureOutputs(initial)[0]?.stem ?? 'figure' : 'figure'))
   const selectedOutput = outputs.find((output) => output.stem === selectedStem) ?? outputs[0]
   const preview = selectedOutput?.preview_url ?? ''
-  const [run, setRun] = useState<Run | null>(null)
-  const [savedFingerprint, setSavedFingerprint] = useState(initial?.id ? fingerprintOf(initial.code, initial.data, initial.schema) : '')
+  const [run, setRun] = useState<Run | null>(resume?.run ?? null)
+  const [savedFingerprint, setSavedFingerprint] = useState(resume?.savedFingerprint ?? (initial?.id ? fingerprintOf(initial.code, initial.data, initial.schema) : ''))
+  const [outputFingerprint, setOutputFingerprint] = useState(resume?.outputFingerprint ?? (initial?.id ? fingerprintOf(initial.code, initial.data, initial.schema) : ''))
   const [importOpen, setImportOpen] = useState(false)
   const [metadataOpen, setMetadataOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantStarted, setAssistantStarted] = useState(false)
   const [dataOpen, setDataOpen] = useState(false)
   const [error, setError] = useState('')
   const uploadRef = useRef<HTMLInputElement>(null)
@@ -147,6 +154,22 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
   const fingerprint = fingerprintOf(code, data, schema)
   const valid = canCommitRun(fingerprint, run, jobs.busy)
   const contentChanged = fingerprint !== savedFingerprint
+  const source: AssistantSource = { code, data, schema, contextKey: assistantKey, previewKey: selectedStem, targetLabel: `${name} · ${selectedStem}`,
+    templateDraft: { assistantKey, name, scope, categoryId, projectId, outputs, selectedStem, run, savedFingerprint, outputFingerprint },
+    onPreview: async (result) => {
+      if (result.code === undefined) throw new Error('Codex 未返回候选代码。')
+      const existing = fingerprint === outputFingerprint && outputs.length ? outputs : undefined
+      const [before, after] = await Promise.all([existing ? Promise.resolve(null) : renderTemplateComparison(code, data, schema), renderTemplateComparison(result.code, data, schema)])
+      const beforeOutputs = existing ?? (before ? figureOutputs(before) : [])
+      const afterOutputs = figureOutputs(after)
+      const stems = [...new Set([...beforeOutputs, ...afterOutputs].map((item) => item.stem))].sort((a, b) => Number(b === selectedStem) - Number(a === selectedStem))
+      if (!stems.length) throw new Error('没有可比较的图形。')
+      const figures = stems.map((stem) => ({ stem, before: beforeOutputs.find((item) => item.stem === stem)?.preview_url ?? '', after: afterOutputs.find((item) => item.stem === stem)?.preview_url ?? '' }))
+      return { before: figures[0].before, after: figures[0].after, figures }
+    },
+    onApply: (result) => { if (result.code === undefined) throw new Error('Codex 未返回可应用的模板代码。'); setCode(result.code); setRun(null); setAssistantStarted(false) },
+  }
+  const assistant = useAssistantBinding(`template:${source.contextKey}`, source)
   useDraftGuard(contentChanged || name !== (initial?.name ?? '未命名模板') || categoryId !== (initial?.category_id ?? 'uncategorized'), onDirtyChange)
   async function validate() {
     setError(''); setRun(null)
@@ -155,6 +178,7 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
       const nextData = result.result.data ?? data; const nextSchema = result.result.schema ?? schema
       const nextOutputs = figureOutputs(result.result)
       setData(nextData); setSchema(nextSchema); setOutputs(nextOutputs)
+      setOutputFingerprint(fingerprintOf(code, nextData, nextSchema))
       if (!nextOutputs.some((output) => output.stem === selectedStem)) setSelectedStem(nextOutputs[0]?.stem ?? 'figure')
       setRun({ runId: result.result.run_id, fingerprint: fingerprintOf(code, nextData, nextSchema), previewUrl: result.result.preview_url, outputs: nextOutputs })
     }
@@ -171,14 +195,26 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
   return <div className="wb-template-editor" data-wb-template-editor>
     <div className="wb-page-heading"><div><h1>{initial?.id ? '编辑模板' : '创建模板'}</h1><p>运行验证后保存模板。</p></div><div className="wb-toolbar"><Button onClick={() => { if (!contentChanged || window.confirm('模板代码或数据尚未保存，离开后将丢弃修改。')) onBack() }}>返回模板库</Button><Button variant="primary" disabled={!name.trim() || jobs.busy || ((contentChanged || !initial?.id) && !valid)} onClick={save} data-wb-template-save><Save />保存模板</Button></div></div>
     <div className="wb-template-metadata"><label className="wb-name-input">模板名称<TextInput aria-label="模板名称" value={name} onChange={(e) => setName(e.target.value)} /></label><label className="wb-field-inline">存放位置<Select ariaLabel="存放位置" value={scope} disabled={!!initial?.id} onChange={(v) => { setScope(v as 'global' | 'project'); setCategoryId('uncategorized') }} options={[{ value: 'global', label: '全局模板库' }, ...(projectId || initial?.project_id ? [{ value: 'project', label: '项目模板库' }] : [])]} /></label><label className="wb-field-inline">分类<Select ariaLabel="模板分类" value={categoryId || 'uncategorized'} onChange={setCategoryId} options={[{ value: 'uncategorized', label: '未分类' }, ...categories.filter((c) => c.scope === scope && c.id !== 'uncategorized').map((c) => ({ value: c.id, label: c.name }))]} /></label><Button variant="secondary" disabled={jobs.busy} onClick={() => setMetadataOpen(true)}>数据规范</Button></div>
-    <div className="wb-editor-bar"><div className="wb-toolbar"><input hidden ref={uploadRef} type="file" accept=".py" data-wb-template-upload onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then((text) => { setCode(text); if (!initial) setName(file.name.replace(/\.py$/i, '')) }) }} /><Button disabled={jobs.busy} onClick={() => uploadRef.current?.click()}><Upload />上传 Python</Button><Button variant="secondary" disabled={jobs.busy} onClick={() => setAssistantOpen(true)} data-wb-template-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={jobs.busy} onClick={() => setImportOpen(true)}>导入示例数据</Button><Button disabled={!data} active={dataOpen} onClick={() => setDataOpen(!dataOpen)}>查看数据{data ? ` ${data.row_count} × ${data.column_count}` : ''}</Button><span className="wb-muted">支持普通脚本与 build_figure(data) 模板</span></div>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" onClick={validate} data-wb-template-run><Play />运行并验证</Button>}</div>
+    <div className="wb-editor-bar"><div className="wb-toolbar"><input hidden ref={uploadRef} type="file" accept=".py" data-wb-template-upload onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then((text) => { setCode(text); if (!initial) setName(file.name.replace(/\.py$/i, '')) }) }} /><Button disabled={jobs.busy} onClick={() => uploadRef.current?.click()}><Upload />上传 Python</Button><Button variant="secondary" disabled={jobs.busy} onClick={() => { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } }} data-wb-template-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={jobs.busy} onClick={() => setImportOpen(true)}>导入示例数据</Button><Button disabled={!data} active={dataOpen} onClick={() => setDataOpen(!dataOpen)}>查看数据{data ? ` ${data.row_count} × ${data.column_count}` : ''}</Button><span className="wb-muted">支持普通脚本与 build_figure(data) 模板</span></div>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" onClick={validate} data-wb-template-run><Play />运行并验证</Button>}</div>
     {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} />}
     <div className="wb-figure-workspace has-code"><CodePane code={code} onChange={setCode} readOnly={jobs.busy} /><FigurePreview outputs={outputs} selectedStem={selectedOutput?.stem ?? 'figure'} onSelect={setSelectedStem} stale={!!preview && contentChanged && !valid} busy={jobs.busy} /></div>
     {dataOpen && data && <div className="wb-data-drawer"><DataTransform data={data} onChange={setData} disabled={jobs.busy} /><DataTable data={data} /></div>}
     {importOpen && <DataWizard onClose={() => setImportOpen(false)} onImport={(next) => { setData(next); setDataOpen(true); setImportOpen(false) }} />}
     {metadataOpen && <SchemaDialog schema={schema} onClose={() => setMetadataOpen(false)} onChange={(next) => { setSchema(next); setMetadataOpen(false) }} />}
-    {assistantOpen && <CodeAssistant code={code} data={data} schema={schema} contextKey={initial?.id ?? `new-template:${projectId ?? 'global'}`} onClose={() => setAssistantOpen(false)} onApply={(result) => { if (result.code === undefined) throw new Error('Codex 未返回可应用的模板代码。'); setCode(result.code); setRun(null) }} />}
+    {!assistant.host && assistantStarted && <CodeAssistant {...source} open={assistantOpen} onReopen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} />}
   </div>
+}
+async function renderTemplateComparison(code: string, data: Snapshot | null, schema: Schema): Promise<NonNullable<Job['result']>> {
+  const { job_id } = await post<{ job_id: string }>('/templates/validate', { code, data, schema })
+  const deadline = Date.now() + 90_000
+  while (Date.now() < deadline) {
+    const job = await api<Job>(`/jobs/${job_id}`)
+    if (job.status === 'success' && job.result) return job.result
+    if (job.status !== 'running') throw new Error(job.error ?? '图形预览未完成。')
+    await new Promise((resolve) => setTimeout(resolve, 650))
+  }
+  await post(`/jobs/${job_id}/cancel`).catch(() => undefined)
+  throw new Error('图形预览超时。')
 }
 function CodePane({ code, onChange, readOnly }: { code: string; onChange: (code: string) => void; readOnly?: boolean }) {
   const lines = code.split('\n').length

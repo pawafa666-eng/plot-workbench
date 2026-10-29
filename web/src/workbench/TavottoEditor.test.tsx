@@ -46,7 +46,7 @@ it('offers Codex after synchronization and stages its candidate before the exist
   expect(panel.id).not.toBe(oldPanelId)
   expect(panel.overrides).toEqual(session.overrides)
   const apply = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/assistant/task-one/apply'))
-  expect(JSON.parse(String(apply?.[1]?.body))).toEqual({ patches: session.overrides })
+  expect(JSON.parse(String(apply?.[1]?.body))).toEqual({ patches: session.overrides, require_preview: true })
   expect(onFinish).not.toHaveBeenCalled()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/finish'))).toBe(false)
   await act(async () => assistant.props!.onClose())
@@ -62,6 +62,27 @@ it('disables the assistant while current overrides have not been rendered', asyn
     useDocumentStore.setState({ doc: { ...doc, objects: doc.objects.map((object) => object.type === 'panel' ? { ...object, overrides: [...object.overrides, { gid: 'title', prop: 'fontsize', value: 15 }] } : object) } })
   })
   expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(true)
+})
+
+it('prevents leaving while the latest edits are still awaiting synchronization', async () => {
+  let guard: (() => boolean) | null = null
+  await act(async () => root.render(<TooltipProvider><TavottoEditor session={session} onFinish={() => {}} onCancel={() => {}} onNavigationGuard={(next) => { guard = next }} /></TooltipProvider>))
+  expect(guard).not.toBeNull()
+  expect(guard!()).toBe(true)
+  await act(async () => {
+    const doc = useDocumentStore.getState().doc
+    useDocumentStore.setState({ doc: { ...doc, objects: doc.objects.map((object) => object.type === 'panel' ? { ...object, overrides: [...object.overrides, { gid: 'title', prop: 'fontsize', value: 15 }] } : object) } })
+  })
+  expect(guard!()).toBe(false)
+})
+
+it('restores an unsaved earlier variant over the authoritative resumed render', async () => {
+  const draft = [{ gid: 'title', prop: 'text', value: 'Earlier edit' }]
+  await act(async () => root.render(<TooltipProvider><TavottoEditor session={session} resumePatches={draft} onFinish={() => {}} onCancel={() => {}} /></TooltipProvider>))
+  const panel = useDocumentStore.getState().doc.objects[0] as PanelObject
+  expect(panel.overrides).toEqual(draft)
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(true)
+  expect(useDocumentStore.getState().past.length).toBeGreaterThan(0)
 })
 
 it('rejects an old assistant callback after switching to another session', async () => {

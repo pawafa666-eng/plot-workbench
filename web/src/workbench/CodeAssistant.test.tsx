@@ -6,7 +6,7 @@ import { fetchAiCapabilities, type AiCapabilities } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
 import { CodeAssistant, type AssistantRun } from './CodeAssistant'
-import type { Snapshot } from './api'
+import { WorkbenchError, type Snapshot } from './api'
 import { DEFAULT_SCHEMA } from './model'
 
 vi.mock('@/lib/api', async (original) => ({ ...await original<typeof import('@/lib/api')>(), fetchAiCapabilities: vi.fn() }))
@@ -117,6 +117,58 @@ it('cancels a task whose create response arrives after the assistant unmounts', 
   await act(async () => created.resolve(json({ id: 'late-task', status: 'running' })))
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/assistant/runs/late-task/cancel'))).toBe(true)
   expect(onApply).not.toHaveBeenCalled()
+})
+
+it('keeps a running conversation alive when its window is hidden and announces completion', async () => {
+  let polls = 0
+  vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST' ? { id: 'task-one', status: 'running' } : ++polls === 1 ? { ...generated, status: 'running' } : generated))
+  await render({ open: true }); await request()
+  await render({ open: false })
+  expect(document.querySelector('[data-dialog="workbench-code-assistant"]')).toBeNull()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
+  await act(async () => vi.advanceTimersByTimeAsync(650))
+  expect(document.querySelector('[data-wb-assistant-notification]')?.textContent).toContain('Codex 已完成')
+  await render({ open: true })
+  expect(document.querySelector('[data-wb-assistant-messages]')?.textContent).toContain('finished')
+})
+
+it('shows before and after images and waits for their preview before applying', async () => {
+  const preview = deferred<{ before: string; after: string }>()
+  const onPreview = vi.fn(() => preview.promise)
+  await render({ onPreview }); await request()
+  expect(onPreview).not.toHaveBeenCalled()
+  expect(button('apply').disabled).toBe(true)
+  await act(async () => button('preview').click())
+  expect(onPreview).toHaveBeenCalledOnce()
+  await act(async () => preview.resolve({ before: '/before.png', after: '/after.png' }))
+  expect(document.querySelector<HTMLImageElement>('[data-wb-assistant-before]')?.getAttribute('src')).toBe('/before.png')
+  expect(document.querySelector<HTMLImageElement>('[data-wb-assistant-after]')?.getAttribute('src')).toBe('/after.png')
+  expect(document.querySelector('[data-wb-assistant-diff-toggle]')).toBeNull()
+  expect(button('apply').disabled).toBe(false)
+})
+
+it('invalidates a comparison for a different selected figure and permits retry after returning', async () => {
+  const onPreview = vi.fn(async () => ({ before: '/before.png', after: '/after.png' }))
+  await render({ previewKey: 'figure-one', onPreview }); await request()
+  await render({ previewKey: 'figure-two', onPreview })
+  expect(document.querySelector('[data-wb-assistant-stale]')).toBeTruthy()
+  expect(button('preview').disabled).toBe(true)
+  await render({ previewKey: 'figure-one', onPreview })
+  await act(async () => button('preview').click())
+  expect(onPreview).toHaveBeenCalledOnce()
+  expect(button('apply').disabled).toBe(false)
+})
+
+it.each(['assistant_preview_changed', 'assistant_preview_required'])('allows a new preview when the server rejects proof: %s', async (code) => {
+  const onPreview = vi.fn(async () => ({ before: '/before.png', after: '/after.png' }))
+  onApply.mockRejectedValueOnce(new WorkbenchError('请重新预览', code))
+  await render({ onPreview }); await request()
+  await act(async () => button('preview').click())
+  await act(async () => button('apply').click())
+  expect(button('apply').disabled).toBe(true)
+  await act(async () => button('preview').click())
+  expect(onPreview).toHaveBeenCalledTimes(2)
+  expect(button('apply').disabled).toBe(false)
 })
 
 it('ignores completed progress that arrives after cancellation', async () => {
@@ -253,15 +305,15 @@ it('disables the retained proposal during a follow-up and restores it after canc
   expect(onApply).toHaveBeenCalledWith(generated)
 })
 
-it('cancels an active task immediately when the dialog is closed', async () => {
+it('does not cancel an active task when the dialog is closed', async () => {
   const progress = deferred<Response>()
   vi.mocked(fetch).mockImplementation((_input, init) => init?.method === 'POST' ? Promise.resolve(json({ id: 'task-one', status: 'running' })) : progress.promise)
   await render(); await request()
   await act(async () => button('close').click())
   expect(onClose).toHaveBeenCalledOnce()
-  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/task-one/cancel'))).toBe(true)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/task-one/cancel'))).toBe(false)
   await act(async () => progress.resolve(json(generated)))
-  expect(button('apply').disabled).toBe(true)
+  expect(button('apply').disabled).toBe(false)
 })
 
 it('starts a fresh context after source changes without reusing the old proposal or history', async () => {
@@ -310,4 +362,18 @@ it('does not submit an oversized UTF-8 conversation pair and explains how to res
   expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
   expect(document.querySelector('[data-wb-assistant-error]')?.textContent).toContain('重新打开')
   expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('继续')
+})
+
+
+it('releases the conversation when the server confirms the task no longer exists', async () => {
+  const onDiscard = vi.fn()
+  vi.mocked(fetch).mockImplementation(async (_input, init) => init?.method === 'POST'
+    ? json({ id: 'expired-task', status: 'running' })
+    : ({ ok: false, json: async () => ({ code: 'assistant_not_found', message: '任务已过期' }) } as Response))
+  await render({ onDiscard })
+  await request()
+  expect(document.querySelector('[data-wb-assistant-status]')?.textContent).toContain('中断')
+  expect(button('discard').disabled).toBe(false)
+  await act(async () => button('discard').click())
+  expect(onDiscard).toHaveBeenCalledOnce()
 })

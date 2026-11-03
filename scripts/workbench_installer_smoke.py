@@ -276,6 +276,23 @@ def workbench_smoke(sidecar: Path, env: dict, work: Path) -> None:
 def main() -> None:
     if sys.platform != "win32":
         raise SystemExit("This installer smoke runs on Windows.")
+    import winreg
+
+    # This smoke installs and uninstalls the actual product, including its
+    # registry keys. Never run it over a developer's existing installation.
+    uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Plot Workbench"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+            existing, _ = winreg.QueryValueEx(key, "UninstallString")
+    except FileNotFoundError:
+        existing = ""
+    if existing:
+        raise SystemExit(
+            "Installer smoke requires a clean Windows user without Plot Workbench installed."
+        )
+    default_shell = Path(os.environ["LOCALAPPDATA"]) / "Plot Workbench" / "PlotWorkbench.exe"
+    if default_shell.exists():
+        raise SystemExit("Installer smoke requires the default install location to be empty.")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", type=Path, required=True)
     args = parser.parse_args()
@@ -317,6 +334,26 @@ def main() -> None:
             for path in (sidecar, bundled, shell, install / "LICENSE", install / "ATTRIBUTION.txt"):
                 if not path.is_file():
                     raise RuntimeError(f"Missing installed artifact: {path}")
+            # Exercise the same /UPDATE path used by the desktop updater. The
+            # first install chose a non-default Unicode path; the update must
+            # overwrite that actual executable without receiving /D again.
+            original_shell = shell.read_bytes()
+            shell.write_bytes(b"previous version sentinel")
+            sentinel = install / "user-file-to-preserve.txt"
+            sentinel.write_text("preserve", encoding="utf-8")
+            run([str(installer), "/P", "/UPDATE"], env)
+            if shell.read_bytes() != original_shell:
+                raise RuntimeError(
+                    "Update did not replace the executable in the original install directory"
+                )
+            if default_shell.exists():
+                raise RuntimeError("Update created a second installation in the default directory")
+            if sentinel.read_text(encoding="utf-8") != "preserve":
+                raise RuntimeError("Update changed an unrelated file in the install directory")
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+                location, _ = winreg.QueryValueEx(key, "InstallLocation")
+            if Path(location.strip('"')).resolve() != install.resolve():
+                raise RuntimeError(f"Update registered the wrong install directory: {location}")
             run(
                 [
                     str(bundled),

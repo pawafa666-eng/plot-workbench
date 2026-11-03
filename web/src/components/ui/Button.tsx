@@ -147,6 +147,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       disabled={blocked}
       aria-busy={busy || undefined}
       data-active={active || undefined}
+      data-ui="button"
+      data-variant={variant}
+      data-size={size}
       onClick={handleClick}
       className={cn(
         'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap',

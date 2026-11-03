@@ -577,6 +577,7 @@ FunctionEnd
   LangString registeringTavotto ${LANG_ENGLISH} "Registering the ${PRODUCTNAME} command line"
   LangString installDirText    ${LANG_ENGLISH} "${PRODUCTNAME} will be installed in the folder below. To use a different folder, click Browse."
   LangString installDirNotWritable ${LANG_ENGLISH} "This folder can't be written to without administrator rights. Choose a folder in your user profile or on another drive."
+  LangString updateInstallNotFound ${LANG_ENGLISH} "The existing ${PRODUCTNAME} installation could not be located. The update was stopped. Please reinstall using the installer."
 !endif
 !ifdef LANG_SIMPCHINESE
   LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 ${PRODUCTNAME}"
@@ -587,6 +588,7 @@ FunctionEnd
   LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 ${PRODUCTNAME} 命令行入口"
   LangString installDirText    ${LANG_SIMPCHINESE} "${PRODUCTNAME} 将安装到下面这个文件夹。要换位置，请点「浏览」。"
   LangString installDirNotWritable ${LANG_SIMPCHINESE} "没有管理员权限写不进这个文件夹。请换一个用户目录下或其他磁盘上的位置。"
+  LangString updateInstallNotFound ${LANG_SIMPCHINESE} "找不到已安装的 ${PRODUCTNAME}，更新已停止。请使用安装包重新安装。"
 !endif
 
 Function .onInit
@@ -618,7 +620,30 @@ Function .onInit
   ; 它回答的是「以前装在哪儿」，不是「现在装着没有」。
   ReadRegStr $ExistingInstall SHCTX "${UNINSTKEY}" "UninstallString"
 
-  ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
+  ; Updates must replace the registered installation, even if an installer
+  ; argument supplies a different directory. A missing/stale registration
+  ; must stop the update instead of silently creating a second installation.
+  ${If} $UpdateMode = 1
+    ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    ${If} $ExistingInstall == ""
+    ${OrIf} $4 == ""
+      Goto update_install_not_found
+    ${EndIf}
+    ${If} $ExistingInstall != '$\"$4\uninstall.exe$\"'
+    ${AndIf} $ExistingInstall != '$4\uninstall.exe'
+      Goto update_install_not_found
+    ${EndIf}
+    IfFileExists "$4\${MAINBINARYNAME}.exe" 0 update_install_not_found
+    StrCpy $INSTDIR $4
+    Goto update_install_dir_ready
+    update_install_not_found:
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(updateInstallNotFound)"
+      ${EndIf}
+      SetErrorLevel 2
+      Abort
+    update_install_dir_ready:
+  ${ElseIf} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
     !if "${INSTALLMODE}" == "perMachine"
       ${If} ${RunningX64}

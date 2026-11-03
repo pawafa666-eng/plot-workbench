@@ -51,6 +51,7 @@ BRAND_STRINGS = (
     "registeringTavotto",
     "installDirText",
     "installDirNotWritable",
+    "updateInstallNotFound",
 )
 
 
@@ -327,7 +328,7 @@ def test_current_user_install_without_admin():
 def test_install_dir_is_localappdata_and_upgrades_keep_old_path():
     """新装的默认值是 %LOCALAPPDATA%\\Tavotto；已有安装沿用注册表里的老路径。"""
     assert 'InstallDir "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
-    assert '${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"' in TEXT
+    assert '${ElseIf} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"' in _function_body(".onInit")
     assert 'StrCpy $INSTDIR "$LOCALAPPDATA\\${PRODUCTNAME}"' in TEXT
     assert "Call RestorePreviousInstallLocation" in TEXT
     body = TEXT.split("Function RestorePreviousInstallLocation\n")[1].split("FunctionEnd")[0]

@@ -942,8 +942,8 @@ fn set_menu_locale(
         return Err(format!("不支持的语言：{locale}"));
     };
     let explicit = explicit.unwrap_or(false);
+    let state = app.state::<AppState>();
     let changed = {
-        let state = app.state::<AppState>();
         let mut cur = state.menu_locale.lock().unwrap();
         let changed = *cur != next;
         *cur = next;

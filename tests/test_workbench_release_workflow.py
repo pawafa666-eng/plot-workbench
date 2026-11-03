@@ -179,9 +179,9 @@ def test_select_draft_accepts_only_one_matching_unpublished_release(tmp_path):
             module.select_draft(releases, "v1.1.2")
 
 
-def test_native_menu_contracts_execute_after_build_and_before_asset_upload():
-    # Subject: executable cargo commands in this Windows job, after resources
-    # exist. Both normal branch builds and signed tag builds must execute them.
+def test_native_menu_contracts_execute_before_packaging_and_asset_upload():
+    # Subject: executable cargo commands in this Windows job, using the documented
+    # empty resource directory before costly packaging. Both branch and tag builds run them.
     job = _jobs()["windows-installer"]
     checks = _step(job, "Verify native desktop menu contracts")
     assert not re.search(r"(?m)^        if:", checks)
@@ -205,5 +205,7 @@ def test_native_menu_contracts_execute_after_build_and_before_asset_upload():
         ],
         ["cargo", "test", "--release", "--manifest-path", "src-tauri/Cargo.toml"],
     ]
-    assert job.index(_step(job, "Build signed Windows updater release")) < job.index(checks)
+    assert "New-Item -ItemType Directory -Force dist/Tavotto | Out-Null" in checks
+    assert job.index(checks) < job.index(_step(job, "Build Windows installer"))
+    assert job.index(checks) < job.index(_step(job, "Build signed Windows updater release"))
     assert job.index(checks) < job.index(_step(job, "Upload verified installer"))

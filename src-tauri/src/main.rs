@@ -655,14 +655,11 @@ fn shell_action(id: &str) -> Option<ShellAction> {
 }
 
 fn on_menu_event(app: &tauri::AppHandle, id: &str) {
-    match shell_action(id) {
-        Some(ShellAction::OpenUrl(url)) => {
-            if let Err(e) = app.opener().open_url(url, None::<&str>) {
-                eprintln!("open help link {id}: {e}");
-            }
-            return;
+    if let Some(ShellAction::OpenUrl(url)) = shell_action(id) {
+        if let Err(e) = app.opener().open_url(url, None::<&str>) {
+            eprintln!("open help link {id}: {e}");
         }
-        None => {}
+        return;
     }
     if id.starts_with("menu-") {
         let _ = app.emit_to(MAIN_WINDOW, "tavotto:menu", id.to_string());

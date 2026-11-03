@@ -1214,7 +1214,7 @@ mod tests {
     /// 「壳退了」。要读配置目录，去 `setup()` 里读。
     #[test]
     fn the_menu_builder_never_touches_the_path_resolver() {
-        let src = include_str!("main.rs");
+        let src = include_str!("main.rs").replace("\r\n", "\n");
         let start = src
             .find("fn build_menu<R: tauri::Runtime>")
             .expect("build_menu 不见了");

@@ -6,15 +6,15 @@
 import { describe, expect, it } from 'vitest'
 
 import golden from '../../../tests/golden/menu_actions.json'
-import { MENU_ACTIONS } from './desktop'
+import { WORKBENCH_MENU_ACTIONS } from './desktop'
 
-describe('MENU_ACTIONS ↔ 壳的菜单项', () => {
+describe('WORKBENCH_MENU_ACTIONS ↔ 壳的菜单项', () => {
   it('转发给前端的 id 与 golden 同一个集合、没有重复', () => {
-    expect(new Set(MENU_ACTIONS).size).toBe(MENU_ACTIONS.length)
-    expect([...MENU_ACTIONS].sort()).toEqual([...golden.forwarded].sort())
+    expect(new Set(WORKBENCH_MENU_ACTIONS).size).toBe(WORKBENCH_MENU_ACTIONS.length)
+    expect([...WORKBENCH_MENU_ACTIONS].sort()).toEqual([...golden.forwarded].sort())
   })
 
   it('壳自己开链接的 help-* 不进前端', () => {
-    for (const id of golden.shell) expect(MENU_ACTIONS as readonly string[]).not.toContain(id)
+    for (const id of golden.shell) expect(WORKBENCH_MENU_ACTIONS as readonly string[]).not.toContain(id)
   })
 })

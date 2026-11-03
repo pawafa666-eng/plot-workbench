@@ -17,6 +17,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { fetchAiCapabilities, patchAiAgent, type AiCapabilities } from '@/lib/api'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { CODEX_GUIDE_URL, PRODUCT_NAME } from '@/lib/brand'
+import { CodingAgentsSection } from './CodingAgentsSection'
 import { t } from '@/i18n'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
@@ -133,7 +135,7 @@ describe('编码 Agent 一级页面', () => {
       li.textContent?.includes(ag('state.not_installed')),
     )!
     expect(row.querySelector('.text-danger')).toBeNull()
-    expect(row.textContent).toContain(ag('subtitle.notInstalled', { product: 'Tavotto' }))
+    expect(row.textContent).toContain(ag('subtitle.notInstalled', { product: PRODUCT_NAME }))
   })
 
   it('broken 与 not_installed 分开表达', async () => {
@@ -153,14 +155,14 @@ describe('编码 Agent 一级页面', () => {
     expect(list.textContent).not.toContain('/opt/homebrew/bin')    // 安装目录
     expect(text()).not.toContain('自动发现本机已经安装的编码 Agent')  // 长说明
     // 反方向那一节没有卡片外框、没有说明段：只有名字 + 外链
-    expect(text()).toContain('Tavotto for Codex')
+    expect(text()).toContain(`${PRODUCT_NAME} for Codex`)
     expect(text()).not.toContain('在 Codex 会话中打开、编辑并导出科研图')
     expect(document.querySelectorAll('.rounded-md.border.border-border.bg-surface.p-3').length).toBe(0)
   })
 
   it('未安装的行说下一步；装坏了的行说清是坏了（第二行只在这两种情况出现）', async () => {
     await open(capsOf([agentCaps({ installed: false, state: 'not_installed', version: null, executable_path: null }), claudeCaps({ state: 'broken', installed: false })]))
-    expect(text()).toContain(ag('subtitle.notInstalled', { product: 'Tavotto' }))
+    expect(text()).toContain(ag('subtitle.notInstalled', { product: PRODUCT_NAME }))
     expect(text()).toContain(ag('subtitle.broken'))
   })
 
@@ -214,7 +216,7 @@ describe('编码 Agent 一级页面', () => {
   it('开关的 aria-label 说清是「在 Tavotto 中启用它」', async () => {
     await open()
     expect(switches()[0].getAttribute('aria-label')).toBe(
-      ag('toggleAria', { name: 'Codex', product: 'Tavotto' }),
+      ag('toggleAria', { name: 'Codex', product: PRODUCT_NAME }),
     )
   })
 
@@ -292,12 +294,12 @@ describe('编码 Agent 一级页面', () => {
     // 判据是「一句不是另一句的重排」——把两串字符排序后必须不同。
     const sorted = (s: string) => [...s.replace(/\s/g, '')].sort().join('')
     expect(sorted(ag('useInProduct'))).not.toBe(sorted(ag('useFromAgents')))
-    expect(text()).toContain(ag('codexIntegrationName', { product: 'Tavotto' }))
+    expect(text()).toContain(ag('codexIntegrationName', { product: PRODUCT_NAME }))
     // 「本机装了 codex CLI」绝不写成「Tavotto for Codex 已安装」
     const link = [...document.querySelectorAll('a')].find((a) =>
       a.textContent?.includes(ag('viewGuide')),
     )!
-    expect(link.getAttribute('href')).toContain('github.com/Tavotto/Tavotto')
+    expect(link.getAttribute('href')).toBe(CODEX_GUIDE_URL)
   })
 
   it('桌面模式下这一节里有「安装 Codex 集成」的入口（issue #170）', async () => {
@@ -375,4 +377,15 @@ describe('三种状态明确区分（审计 T44 验收）', () => {
     // 颜色也不同，但它只是佐证——上面那条才是判据
     expect(badgeOf(rows[0]).className).not.toBe(badgeOf(rows[1]).className)
   })
+})
+
+
+it('workbench configures only its Codex assistant and omits the upstream plugin installer', async () => {
+  await open()
+  await act(async () => root.render(<TooltipProvider><CodingAgentsSection workbench /></TooltipProvider>))
+  expect(document.querySelector('[data-agent-open="codex"]')).toBeTruthy()
+  expect(document.querySelector('[data-agent-open="claude-code"]')).toBeNull()
+  expect(document.querySelectorAll('[data-agent-open]')).toHaveLength(1)
+  expect(document.querySelector('[data-agent-section="external"]')).toBeNull()
+  expect(document.querySelector('[data-agent-codex-integration]')).toBeNull()
 })

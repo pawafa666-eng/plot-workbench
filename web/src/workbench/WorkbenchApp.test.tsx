@@ -2,15 +2,16 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorkbenchApp } from './WorkbenchApp'
-import { checkDesktopUpdate, onDesktopMenu, pickDirectory, type MenuAction } from '@/lib/desktop'
+import { checkDesktopUpdate, isDesktop, onWorkbenchMenu, pickDirectory, setWorkbenchMenuEnabled, type WorkbenchMenuAction } from '@/lib/desktop'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
 
 vi.mock('@/lib/desktop', async (original) => ({
   ...await original<typeof import('@/lib/desktop')>(),
-  isDesktop: () => true,
-  onDesktopMenu: vi.fn(async () => () => {}),
+  isDesktop: vi.fn(() => true),
+  onWorkbenchMenu: vi.fn(async () => () => {}),
   checkDesktopUpdate: vi.fn(async () => null),
+  setWorkbenchMenuEnabled: vi.fn(async () => true),
   pickDirectory: vi.fn(async () => null),
 }))
 
@@ -23,6 +24,7 @@ beforeEach(async () => {
   useUiStore.setState({ settingsOpen: false, settingsSection: null, dialogStack: [] })
   useUpdateStore.setState({ status: null, desktopPhase: 'idle', desktopChecked: false, desktopError: null })
   vi.clearAllMocks()
+  vi.mocked(isDesktop).mockReturnValue(true)
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
     const data = url.includes('/workbench/status')
@@ -57,18 +59,65 @@ it('opens the real update settings from the workbench and checks only after a cl
   expect(settings).toBeTruthy()
   await act(async () => settings!.click())
   expect(document.querySelector('[role="dialog"]')).toBeTruthy()
+  expect(document.querySelector('[data-section=general][aria-current=true]')).toBeTruthy()
+  expect(checkButton()).toBeUndefined()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-section=about]')!.click())
   expect(checkButton()).toBeTruthy()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/update/check'))).toBe(false)
   expect(checkDesktopUpdate).not.toHaveBeenCalled()
   await act(async () => checkButton()!.click())
   expect(checkDesktopUpdate).toHaveBeenCalledTimes(1)
 })
 
 it('routes the native update menu to the same settings without checking', async () => {
-  expect(onDesktopMenu).toHaveBeenCalledTimes(1)
-  const handler = vi.mocked(onDesktopMenu).mock.calls[0][0]
-  await act(async () => handler('menu-check-updates' satisfies MenuAction))
+  expect(onWorkbenchMenu).toHaveBeenCalledTimes(1)
+  const handler = vi.mocked(onWorkbenchMenu).mock.calls[0][0]
+  await act(async () => handler('menu-check-updates' satisfies WorkbenchMenuAction))
   expect(checkButton()).toBeTruthy()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/update/check'))).toBe(false)
   expect(checkDesktopUpdate).not.toHaveBeenCalled()
+})
+
+it('uses workbench settings and keeps attribution inside About', async () => {
+  expect(document.querySelector('.wb-sidebar-bottom')?.textContent).not.toContain('Tavotto')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-settings]')!.click())
+  expect([...document.querySelectorAll('[data-section]')].map((node) => node.getAttribute('data-section'))).toEqual(['general', 'ai', 'diagnostics', 'about'])
+  expect(document.querySelector('[data-wb-settings-root]')).toBeTruthy()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-section=about]')!.click())
+  const attribution = document.querySelector<HTMLDetailsElement>('[data-wb-attribution]')
+  expect(attribution?.open).toBe(false)
+  expect(attribution?.textContent).toContain('Tavotto v0.18.0')
+  expect(attribution?.textContent).toContain('AGPL-3.0-only')
+})
+
+it('opens project and template workflows from native menus, with current availability', async () => {
+  const handler = vi.mocked(onWorkbenchMenu).mock.calls[0][0]
+  const enabled = vi.mocked(setWorkbenchMenuEnabled).mock.calls.at(-1)![0]
+  expect(enabled).toContain('menu-open-project')
+  expect(enabled).not.toContain('menu-new-plot')
+  expect(enabled).not.toContain('menu-save')
+  await act(async () => handler('menu-open-project'))
+  expect(document.querySelector('[data-dialog="workbench-open-project"]')).toBeTruthy()
+  // A second navigation command cannot leave an open dialog behind.
+  await act(async () => handler('menu-new-template'))
+  expect(document.querySelector('[data-wb-template-editor]')).toBeNull()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-dialog="workbench-open-project"] [data-dialog-close]')!.click())
+  await act(async () => handler('menu-new-template'))
+  expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
+})
+
+it('uses the workbench help and protects an unsaved template when navigating', async () => {
+  const handler = vi.mocked(onWorkbenchMenu).mock.calls[0][0]
+  await act(async () => handler('menu-shortcut-help'))
+  expect(document.querySelector('[data-dialog="workbench-help"]')?.textContent).toContain('运行图 / 验证模板')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-dialog="workbench-help"] [data-dialog-close]')!.click())
+  await act(async () => handler('menu-new-template'))
+  expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  await act(async () => handler('menu-home'))
+  expect(confirm).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
+  confirm.mockRestore()
 })
 
 it('creates a project in an existing folder with an optional name', async () => {
@@ -115,4 +164,14 @@ it('uses the native existing-folder picker for project creation', async () => {
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-project-confirm]')!.click())
   expect(document.querySelector('[data-dialog="workbench-create-project"]')).toBeNull()
   expect(document.querySelector('h1')?.textContent).toContain('已有数据')
+})
+
+
+it('browser About uses the workbench version without exposing the inherited Python updater', async () => {
+  vi.mocked(isDesktop).mockReturnValue(false)
+  await act(async () => useUiStore.getState().setSettingsOpen(true, 'about'))
+  expect(document.querySelector('[data-wb-about-version]')?.textContent).toBe('v1.0.5')
+  expect(checkButton()).toBeUndefined()
+  expect(document.querySelector('[data-update-auto]')).toBeNull()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/update/'))).toBe(false)
 })

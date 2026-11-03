@@ -177,3 +177,33 @@ def test_select_draft_accepts_only_one_matching_unpublished_release(tmp_path):
     for releases in ([other], [draft, draft], [{**draft, "draft": False}], [{**draft, "id": True}]):
         with pytest.raises(ValueError):
             module.select_draft(releases, "v1.1.2")
+
+
+def test_native_menu_contracts_execute_after_build_and_before_asset_upload():
+    # Subject: executable cargo commands in this Windows job, after resources
+    # exist. Both normal branch builds and signed tag builds must execute them.
+    job = _jobs()["windows-installer"]
+    checks = _step(job, "Verify native desktop menu contracts")
+    assert not re.search(r"(?m)^        if:", checks)
+    commands = [
+        shlex.split(line.strip())
+        for line in checks.splitlines()
+        if line.strip().startswith("cargo ")
+    ]
+    assert commands == [
+        ["cargo", "fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check"],
+        [
+            "cargo",
+            "clippy",
+            "--release",
+            "--manifest-path",
+            "src-tauri/Cargo.toml",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        ["cargo", "test", "--release", "--manifest-path", "src-tauri/Cargo.toml"],
+    ]
+    assert job.index(_step(job, "Build signed Windows updater release")) < job.index(checks)
+    assert job.index(checks) < job.index(_step(job, "Upload verified installer"))

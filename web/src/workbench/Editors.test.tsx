@@ -6,6 +6,7 @@ import { fetchAiCapabilities, type AiCapabilities } from '@/lib/api'
 import { PlotEditor, TemplateEditor } from './Editors'
 import { download, type Plot } from './api'
 import { DEFAULT_SCHEMA } from './model'
+import { menuActionEnabled, performEditorMenuAction } from './menu'
 
 vi.mock('./TavottoEditor', () => ({ TavottoEditor: () => <div data-wb-test-tavotto /> }))
 vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), download: vi.fn(async () => {}) }))
@@ -57,7 +58,7 @@ it('keeps single-output projects compatible without an outputs field', async () 
   expect(JSON.parse(String(request?.[1]?.body))).toEqual({ stem: 'figure' })
 })
 
-it('saves the complete successful run even after selecting another figure', async () => {
+it('runs and saves every figure through the native menu, including after changing the selected output', async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input)
     const body = url.endsWith('/render') ? { job_id: 'run-job' }
@@ -66,11 +67,11 @@ it('saves the complete successful run even after selecting another figure', asyn
     return { ok: true, json: async () => body } as Response
   })
   await renderPlot()
-  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-run]')!.click())
+  await act(async () => { performEditorMenuAction('menu-run') })
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-output="figure_2"]')!.click())
   const save = document.querySelector<HTMLButtonElement>('[data-wb-save]')!
   expect(save.disabled).toBe(false)
-  await act(async () => save.click())
+  await act(async () => { performEditorMenuAction('menu-save') })
   const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/save'))
   expect(JSON.parse(String(request?.[1]?.body))).toEqual({ run_id: 'all-figures-run' })
 })
@@ -134,5 +135,10 @@ it('blocks export, save and Tavotto when edited code no longer matches the saved
   expect(document.querySelector<HTMLButtonElement>('[data-wb-export]')?.disabled).toBe(true)
   expect(document.querySelector<HTMLButtonElement>('[data-wb-open-tavotto]')?.disabled).toBe(true)
   expect(document.querySelector<HTMLButtonElement>('[data-wb-save]')?.disabled).toBe(true)
+  expect(menuActionEnabled('menu-save', true)).toBe(false)
+  expect(menuActionEnabled('menu-export', true)).toBe(false)
+  await act(async () => { performEditorMenuAction('menu-save'); performEditorMenuAction('menu-export') })
+  expect(document.querySelector('[data-dialog="workbench-export"]')).toBeNull()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/save'))).toBe(false)
   expect(document.querySelector<HTMLImageElement>('[data-wb-preview-image]')?.getAttribute('src')).toBe('/first.png')
 })

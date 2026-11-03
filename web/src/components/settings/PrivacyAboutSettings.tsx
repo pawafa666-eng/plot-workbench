@@ -113,7 +113,7 @@ function ProductBlock({ version }: { version?: string }) {
  * ② **「会发送什么」不再是一段会过期的散文。** 见 `lib/telemetryDisclosure.ts`：
  *    每条事件一行，与后端 `EVENTS` 表严格同源，默认折叠。
  */
-function PrivacyBlock() {
+export function PrivacyBlock() {
   useTranslation('dialogs')
   const settings = useTelemetryStore((s) => s.settings)
   const choose = useTelemetryStore((s) => s.choose)

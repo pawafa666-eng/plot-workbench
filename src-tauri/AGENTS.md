@@ -20,8 +20,10 @@
   单实例 argv 转发负责）、握手文件（无密钥、原子写、退出清理）、
   stdin EOF + 父 PID 双路「壳没了就自杀」（`test_desktop_sidecar.py` 看护）。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
-  `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
-  `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。
+  `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id（`WORKBENCH_MENU_ACTIONS`）与
+  `src-tauri/src/main.rs::menu_spec` 严格同源（`tavotto:menu`）。工作台按当前页面同步菜单启用态，
+  `set_workbench_menu_enabled` 只能调整这棵菜单的既有项；保存、运行与导出激活页面原有按钮，
+  不另建写入入口。
 - **Tauri 2 的 ACL 对应用自定义命令同样生效**：新增 `#[tauri::command]` 必须
   三处同步——`build.rs` 的 `AppManifest::commands`、`capabilities/` 里**该拿它的
   那个窗口**加 `allow-<命令名连字符化>`（本 fork 只有主窗口 `main.json`）、

@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
-import type { UpdateStatus } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/store/updateStore'
 import { UpdateRestartError } from '../UpdateRestartError'
@@ -82,7 +81,7 @@ export function UpdateSettings() {
   }, [status, check])
 
   // 桌面模式：Python updater 整个停用（升级归 Tauri 层）
-  if (status?.desktop) return <DesktopUpdateSettings status={status} />
+  if (status?.desktop) return <DesktopUpdateSettings currentVersion={status.current} releasesUrl={status.releases_url} />
 
   return (
     <SettingSection>
@@ -226,7 +225,7 @@ export function UpdateSettings() {
  *
  * 安装包的签名由壳里的公钥校验，校验不过当场失败——这里不做「忽略签名」的口子。
  */
-function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
+export function DesktopUpdateSettings({ currentVersion, releasesUrl }: { currentVersion: string; releasesUrl: string }) {
   useTranslation('dialogs')
   const {
     desktopPhase,
@@ -267,7 +266,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
         <div className="flex flex-col gap-1">
           <InlineWarning tone="danger">{desktopError}</InlineWarning>
           <a
-            href={status.releases_url}
+            href={releasesUrl}
             target="_blank"
             rel="noreferrer"
             className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
@@ -282,7 +281,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
           <p className="text-sm text-ink">
             <span className="font-medium">{st('update.available')}</span>{' '}
             <span className="font-mono">{desktopUpdate.version}</span>
-            <span className="type-meta ml-2">{st('update.currentIs', { version: status.current })}</span>
+            <span className="type-meta ml-2">{st('update.currentIs', { version: currentVersion })}</span>
           </p>
           {desktopUpdate.notes && (
             <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
@@ -331,7 +330,7 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
                 {st('update.downloadAndInstall')}
               </Button>
               <a
-                href={status.releases_url}
+                href={releasesUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"

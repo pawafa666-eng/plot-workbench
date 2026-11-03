@@ -21,6 +21,7 @@
     "allow-resolve-close-request",
     "updater:default",
     "process:allow-restart",
-    "allow-native-file-drop"
+    "allow-native-file-drop",
+    "allow-set-workbench-menu-enabled"
   ]
 }

@@ -18,9 +18,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
-use tauri::menu::{
-    AboutMetadata, AboutMetadataBuilder, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu,
-};
+use tauri::menu::{Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
@@ -29,6 +27,7 @@ struct AppState {
     /// 原生菜单当前用的语言。前端 i18n 就绪 / 用户切语言时经
     /// `set_menu_locale` 报上来，Rust 据此重建菜单并记住给下次启动。
     menu_locale: Mutex<i18n::Locale>,
+    menu_enabled: Mutex<Option<Vec<String>>>,
     port: Arc<OnceLock<u16>>,
     nonce: String,
     /// 本次启动带进来的交接请求（`Tavotto --open <目录> [--stem <s>]`）。
@@ -635,7 +634,9 @@ const REPO_URL: &str = env!("TAVOTTO_REPO_URL");
 /// 其余 `menu-*` 一律经 `tavotto:menu` 交给前端。
 fn help_link(id: &str) -> Option<String> {
     match id {
-        "help-docs" => Some(format!("{REPO_URL}#readme")),
+        "help-docs" => Some(format!(
+            "{REPO_URL}/blob/workbench/v1/docs/workbench/usage.md"
+        )),
         "help-report-issue" => Some(format!("{REPO_URL}/issues/new/choose")),
         _ => None,
     }
@@ -671,7 +672,6 @@ fn on_menu_event(app: &tauri::AppHandle, id: &str) {
 /// 系统预定义角色（行为归操作系统：剪贴板、隐藏、关窗……）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Native {
-    About,
     Hide,
     HideOthers,
     ShowAll,
@@ -711,25 +711,20 @@ fn item(id: &'static str, text: &'static str, accel: Option<&'static str>) -> En
 ///
 /// `macos` 是参数而不是 `cfg`：两个平台的形状在任何一台机器上的单测里都量得到。
 ///
-/// **菜单只接前端已有的命令**，动作全部落到前端既有的 action 上
-/// （`web/src/hooks/menuActions.ts`）。加速键只挂在前端**本来就认**的键上
-/// （`hooks/useKeyboard.ts`），并且前端对菜单转发做与 keydown 相同的让位判断——
-/// 菜单加速键可能先于 webview 的 keydown 截获按键（Windows 一定如此），
-/// 输入框聚焦时 ⌘D / ⌘0 / ⌘± 不能被菜单劫持成画布动作。
-/// Delete / ? 这类不带修饰键的前端键位**不挂**加速键：挂上等于在输入框里打不了字。
+/// Plot Workbench commands are handled by web/src/workbench/menu.ts. Editor commands
+/// activate the existing buttons; canvas commands share runDiscreteAction and undo/zoom.
+/// Input controls retain native cut/copy/paste/select-all roles on both platforms.
 fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     use Entry::{Native as N, Separator as Sep, Submenu as Sub};
     use Native::*;
-
-    // 设置 / 检查更新：macOS 放应用菜单，别的平台（没有应用菜单）分别放「文件」与「帮助」
     let settings = || item("menu-settings", m.app_settings, Some("CmdOrCtrl+Comma"));
-
+    let about = || item("menu-about", m.app_about, None);
     let mut menus = Vec::new();
     if macos {
         menus.push(Sub(
             env!("TAVOTTO_PRODUCT_NAME"),
             vec![
-                N(About, m.app_about),
+                about(),
                 Sep,
                 settings(),
                 Sep,
@@ -741,35 +736,31 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
             ],
         ));
     }
-
     let mut file = vec![
+        item("menu-new-project", m.file_new_project, None),
         item(
             "menu-open-project",
             m.file_open_project,
             Some("CmdOrCtrl+O"),
         ),
+        item("menu-new-plot", m.file_new_plot, None),
+        item("menu-new-template", m.file_new_template, None),
         Sep,
+        item("menu-run", m.file_run, Some("CmdOrCtrl+Enter")),
         item("menu-save", m.file_save, Some("CmdOrCtrl+S")),
-        item(
-            "menu-save-layout",
-            m.file_save_layout,
-            Some("CmdOrCtrl+Shift+S"),
-        ),
-        Sep,
         item("menu-export", m.file_export, Some("CmdOrCtrl+E")),
         Sep,
-        // 预定义角色：macOS 走 performClose:、Windows 发 WM_CLOSE，两条都会进
-        // `WindowEvent::CloseRequested` → 关窗询问闸，与点红灯同一条路。
-        N(CloseWindow, m.file_close_window),
+        item("menu-library-root", m.file_library_root, None),
     ];
     if !macos {
-        file.extend([Sep, settings(), Sep, N(Quit, m.quit)]);
+        file.extend([Sep, settings()]);
+    }
+    // Closing still uses the existing close-request guard.
+    file.extend([Sep, N(CloseWindow, m.file_close_window)]);
+    if !macos {
+        file.extend([Sep, N(Quit, m.quit)]);
     }
     menus.push(Sub(m.file, file));
-
-    // 撤销/重做是自定义项：走事件转发给前端（画布 undo 栈），文本框内的
-    // 原生撤销由前端按焦点分派。剪贴板项必须用预定义角色——macOS 的
-    // WKWebView 里没有这些菜单角色时 ⌘C/⌘V 在输入框里完全失效。
     menus.push(Sub(
         m.edit,
         vec![
@@ -779,47 +770,24 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
             N(Cut, m.edit_cut),
             N(Copy, m.edit_copy),
             N(Paste, m.edit_paste),
-            item("menu-duplicate", m.edit_duplicate, Some("CmdOrCtrl+D")),
-            // 不挂 Delete / Backspace：那是输入框里删字的键
-            item("menu-delete", m.edit_delete, None),
             N(SelectAll, m.edit_select_all),
-            Sep,
-            // 对齐与分布：id 的后缀就是前端 `AlignMode`，参照与属性页、多选浮动栏
-            // 同一套（`arrangeStore.alignRefFor`）。菜单感知不到选区，选得不够时由前端说出口。
-            Sub(
-                m.edit_arrange,
-                vec![
-                    item("menu-align-left", m.align_left, None),
-                    item("menu-align-hcenter", m.align_hcenter, None),
-                    item("menu-align-right", m.align_right, None),
-                    Sep,
-                    item("menu-align-top", m.align_top, None),
-                    item("menu-align-vcenter", m.align_vcenter, None),
-                    item("menu-align-bottom", m.align_bottom, None),
-                    Sep,
-                    item("menu-align-hdist", m.align_hdist, None),
-                    item("menu-align-vdist", m.align_vdist, None),
-                ],
-            ),
         ],
     ));
-
     let mut view = vec![
+        item("menu-home", m.view_home, None),
+        item("menu-templates", m.view_templates, None),
+        item("menu-palettes", m.view_palettes, None),
+        item("menu-trash", m.view_trash, None),
+        Sep,
         item("menu-zoom-in", m.view_zoom_in, Some("CmdOrCtrl+Equal")),
         item("menu-zoom-out", m.view_zoom_out, Some("CmdOrCtrl+Minus")),
         item("menu-zoom-actual", m.view_actual_size, Some("CmdOrCtrl+0")),
         item("menu-zoom-fit", m.view_fit, Some("CmdOrCtrl+1")),
-        Sep,
-        item("menu-toggle-left", m.view_toggle_left, None),
-        item("menu-toggle-right", m.view_toggle_right, None),
     ];
     if macos {
-        // 全屏的预定义角色只有 macOS 有（muda：Windows / Linux 不支持）
         view.extend([Sep, N(Fullscreen, m.view_fullscreen)]);
     }
     menus.push(Sub(m.view, view));
-
-    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
     if macos {
         menus.push(Sub(
             m.window,
@@ -831,31 +799,55 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
             ],
         ));
     }
-
     let mut help = vec![
         item("menu-shortcut-help", m.help_shortcuts, None),
         item("help-docs", m.help_docs, None),
         item("help-report-issue", m.help_report_issue, None),
         Sep,
+        item("menu-check-updates", m.app_check_updates, None),
         item("menu-diagnostics", m.help_diagnostics, None),
     ];
-    // macOS 的「关于」与「检查更新」在应用菜单里，帮助菜单不再重复一份
     if !macos {
-        help.extend([Sep, N(About, m.app_about)]);
+        help.extend([Sep, about()]);
     }
     menus.push(Sub(m.help, help));
     menus
+}
+
+/// Frontend state only controls declared custom menu items in the local main window.
+#[tauri::command]
+fn set_workbench_menu_enabled(app: tauri::AppHandle, enabled: Vec<String>) -> Result<(), String> {
+    let menu = app.menu().ok_or("main menu is unavailable")?;
+    apply_workbench_menu_enabled(menu.items().map_err(|e| e.to_string())?, &enabled)?;
+    *app.state::<AppState>().menu_enabled.lock().unwrap() = Some(enabled);
+    Ok(())
+}
+
+fn apply_workbench_menu_enabled<R: tauri::Runtime>(
+    items: Vec<tauri::menu::MenuItemKind<R>>,
+    enabled: &[String],
+) -> Result<(), String> {
+    for kind in items {
+        if let Some(submenu) = kind.as_submenu() {
+            apply_workbench_menu_enabled(submenu.items().map_err(|e| e.to_string())?, enabled)?;
+        } else if let Some(item) = kind.as_menuitem() {
+            let id: &str = item.id().as_ref();
+            if id.starts_with("menu-") {
+                item.set_enabled(enabled.iter().any(|value| value == id))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn build_native<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     kind: Native,
     text: &str,
-    about: &AboutMetadata<'static>,
 ) -> tauri::Result<PredefinedMenuItem<R>> {
     let t = Some(text);
     match kind {
-        Native::About => PredefinedMenuItem::about(handle, t, Some(about.clone())),
         Native::Hide => PredefinedMenuItem::hide(handle, t),
         Native::HideOthers => PredefinedMenuItem::hide_others(handle, t),
         Native::ShowAll => PredefinedMenuItem::show_all(handle, t),
@@ -876,7 +868,6 @@ fn build_submenu<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
     entries: &[Entry],
-    about: &AboutMetadata<'static>,
 ) -> tauri::Result<Submenu<R>> {
     let sub = Submenu::new(handle, text, true)?;
     for entry in entries {
@@ -889,10 +880,10 @@ fn build_submenu<R: tauri::Runtime>(
                 };
                 sub.append(&b.build(handle)?)?;
             }
-            Entry::Native(kind, text) => sub.append(&build_native(handle, *kind, text, about)?)?,
+            Entry::Native(kind, text) => sub.append(&build_native(handle, *kind, text)?)?,
             Entry::Separator => sub.append(&PredefinedMenuItem::separator(handle)?)?,
             Entry::Submenu(text, children) => {
-                sub.append(&build_submenu(handle, text, children, about)?)?
+                sub.append(&build_submenu(handle, text, children)?)?
             }
         }
     }
@@ -905,19 +896,12 @@ fn build_menu_in<R: tauri::Runtime>(
     locale: i18n::Locale,
 ) -> tauri::Result<Menu<R>> {
     let m = i18n::text(locale);
-    let about = AboutMetadataBuilder::new()
-        .name(Some(env!("TAVOTTO_PRODUCT_NAME")))
-        .version(Some(env!("CARGO_PKG_VERSION")))
-        .website(Some(REPO_URL))
-        .comments(Some(m.about_comments))
-        .build();
-
     let menu = Menu::new(handle)?;
     for top in menu_spec(m, cfg!(target_os = "macos")) {
         let Entry::Submenu(text, entries) = top else {
             unreachable!("菜单栏顶层只放子菜单");
         };
-        menu.append(&build_submenu(handle, text, &entries, &about)?)?;
+        menu.append(&build_submenu(handle, text, &entries)?)?;
     }
     Ok(menu)
 }
@@ -978,6 +962,9 @@ fn set_menu_locale(
         return Ok(());
     }
     let menu = build_menu_in(&app, next).map_err(|e| e.to_string())?;
+    if let Some(enabled) = state.menu_enabled.lock().unwrap().as_ref() {
+        apply_workbench_menu_enabled(menu.items().map_err(|e| e.to_string())?, enabled)?;
+    }
     app.set_menu(menu).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1073,7 +1060,6 @@ fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str, locale: i18
     let _ = win.eval(format!("window.location.replace({})", js_string(&q)));
 }
 
-
 fn main() {
     let state = AppState {
         sidecar: Mutex::new(None),
@@ -1083,6 +1069,7 @@ fn main() {
         // 真正的初值在 build_menu 里按配置目录读；这里先摆默认档，
         // 免得 set_menu_locale 把「和现在一样」误判成需要重建。
         menu_locale: Mutex::new(i18n::DEFAULT_LOCALE),
+        menu_enabled: Mutex::new(None),
         // 默认**不拦**：前端注册好监听器后自己来 arm（那时才为那个窗口建闸）。
         close_gates: Mutex::new(HashMap::new()),
     };
@@ -1112,6 +1099,7 @@ fn main() {
             reveal_export,
             reveal_project_dir,
             set_menu_locale,
+            set_workbench_menu_enabled,
             codex_integration,
             arm_close_guard,
             resolve_close_request,
@@ -1129,7 +1117,8 @@ fn main() {
                 // 不会把同名的新窗口关掉。
                 tauri::WindowEvent::Destroyed => {
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
-                        if let Some(gate) = state.close_gates.lock().unwrap().get_mut(window.label())
+                        if let Some(gate) =
+                            state.close_gates.lock().unwrap().get_mut(window.label())
                         {
                             gate.window_gone();
                         }
@@ -1337,11 +1326,10 @@ mod tests {
             "CmdOrCtrl+Comma",
             "CmdOrCtrl+O",
             "CmdOrCtrl+S",
-            "CmdOrCtrl+Shift+S",
+            "CmdOrCtrl+Enter",
             "CmdOrCtrl+E",
             "CmdOrCtrl+Z",
             "CmdOrCtrl+Shift+Z",
-            "CmdOrCtrl+D",
             "CmdOrCtrl+Equal",
             "CmdOrCtrl+Minus",
             "CmdOrCtrl+0",

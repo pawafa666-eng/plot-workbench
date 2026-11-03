@@ -81,7 +81,7 @@ export function TavottoEditor({ session, resumePatches, data = null, schema = DE
       setStaged({ source: session, current: next })
     } finally { if (alive.current && liveSession.current === source) setBusy(false) }
   }
-  if (!panelId) return <div className="wb-loading">正在准备 Tavotto 画布…</div>
+  if (!panelId) return <div className="wb-loading">正在准备编辑画布…</div>
   return <PaletteContext.Provider value={{ palettes, error: paletteError }}><EmbeddedCanvas panelId={panelId} sessionId={currentSession.session_id} data={data} schema={schema} busy={busy} error={error} targetLabel={targetLabel} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onApplyAssistant={applyAssistant} onFinish={async () => {
     setBusy(true); setError('')
     try {
@@ -132,10 +132,10 @@ function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApply
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler)
   }, [assistantOpen])
   return <div className="wb-tavotto" data-wb-tavotto>
-    <div className="wb-editor-bar"><div className="wb-toolbar"><strong>Tavotto 图内编辑</strong><IconButton label="撤销" tip={false} disabled={!canUndo || busy} onClick={() => runUndoRedo(false)}><Undo2 /></IconButton><IconButton label="重做" tip={false} disabled={!canRedo || busy} onClick={() => runUndoRedo(true)}><Redo2 /></IconButton><span className="wb-muted">{pending ? '正在同步图内修改…' : '画布已同步'}</span></div><div className="wb-toolbar"><Button variant="secondary" disabled={busy || !!pending || render?.status !== 'ready'} onClick={() => { finishActiveGesture(); const current = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId); if (current && exactPanelRender(useRenderStore.getState(), current)?.status === 'ready') { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } } }} data-wb-tavotto-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={busy} onClick={onCancel}>取消本次编辑</Button><Button variant="primary" disabled={busy || !!pending || render?.status === 'error'} loading={busy} loadingLabel="正在验证并写回…" onClick={onFinish} data-wb-tavotto-finish>完成并保存</Button></div></div>
+    <div className="wb-editor-bar"><div className="wb-toolbar"><strong>图内编辑</strong><IconButton label="撤销" data-wb-undo tip={false} disabled={!canUndo || busy} onClick={() => runUndoRedo(false)}><Undo2 /></IconButton><IconButton label="重做" data-wb-redo tip={false} disabled={!canRedo || busy} onClick={() => runUndoRedo(true)}><Redo2 /></IconButton><span className="wb-muted">{pending ? '正在同步图内修改…' : '画布已同步'}</span></div><div className="wb-toolbar"><Button variant="secondary" disabled={busy || !!pending || render?.status !== 'ready'} onClick={() => { finishActiveGesture(); const current = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId); if (current && exactPanelRender(useRenderStore.getState(), current)?.status === 'ready') { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } } }} data-wb-tavotto-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={busy} onClick={onCancel}>取消本次编辑</Button><Button variant="primary" disabled={busy || !!pending || render?.status === 'error'} loading={busy} loadingLabel="正在验证并写回…" onClick={onFinish} data-wb-tavotto-finish>完成并保存</Button></div></div>
     {(error || render?.error) && <div className="wb-error" role="alert">{error || formatMessage(render?.error ?? null)}</div>}
     <div className={`wb-tavotto-body${busy ? ' wb-locked' : ''}`}><div className="wb-canvas-stage"><CanvasStage /></div>{panel && <aside className="wb-inspector"><ElementInspector panel={panel} /></aside>}</div>
-    <div className="wb-editor-foot">完成后将保存到 Python 脚本，后续继续使用 Tavotto 调整。取消或验证失败不会锁定代码。</div>
+    <div className="wb-editor-foot">完成后将保存到 Python 脚本，后续可继续进行图内编辑。取消或验证失败不会锁定代码。</div>
     {!assistant.host && assistantStarted && source && <CodeAssistant {...source} open={assistantOpen} onReopen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} />}
   </div>
 }

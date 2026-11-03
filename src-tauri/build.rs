@@ -42,6 +42,7 @@ fn main() {
             "reveal_export",
             "reveal_project_dir",
             "set_menu_locale",
+            "set_workbench_menu_enabled",
             "codex_integration",
             "arm_close_guard",
             "resolve_close_request",

@@ -77,6 +77,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
         run: python scripts/workbench_build.py --release-tag $env:GITHUB_REF_NAME
+      - name: Verify native desktop menu contracts
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          if ($LASTEXITCODE -ne 0) { throw "Desktop Rust formatting failed" }
+          cargo clippy --release --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw "Desktop Rust lint failed" }
+          cargo test --release --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Desktop native menu tests failed" }
       - name: Verify updater signature matches embedded public key
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh

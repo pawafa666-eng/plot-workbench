@@ -7,6 +7,7 @@ import { useRenderStore } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { TavottoEditor, type TavottoSession } from './TavottoEditor'
+import { performEditorMenuAction } from './menu'
 import type { AssistantRun } from './CodeAssistant'
 
 const assistant = vi.hoisted(() => ({ props: null as null | { onApply: (result: AssistantRun) => Promise<void>; onClose: () => void; patches: unknown[] } }))
@@ -50,7 +51,7 @@ it('offers Codex after synchronization and stages its candidate before the exist
   expect(onFinish).not.toHaveBeenCalled()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/finish'))).toBe(false)
   await act(async () => assistant.props!.onClose())
-  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-tavotto-finish]')!.click())
+  await act(async () => { performEditorMenuAction('menu-save') })
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/sessions/session-one/finish'))).toBe(true)
   expect(onFinish).toHaveBeenCalledOnce()
 })

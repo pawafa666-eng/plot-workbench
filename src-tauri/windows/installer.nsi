@@ -624,7 +624,21 @@ Function .onInit
   ; argument supplies a different directory. A missing/stale registration
   ; must stop the update instead of silently creating a second installation.
   ${If} $UpdateMode = 1
-    ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    ; The active uninstall record owns the install directory. MANUPRODUCTKEY
+    ; is a historical cache (it can survive an uninstall); consult it only
+    ; for older registrations without InstallLocation.
+    ReadRegStr $4 SHCTX "${UNINSTKEY}" "InstallLocation"
+    ${If} $4 == ""
+      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    ${Else}
+      ; Our installers store InstallLocation with surrounding quotes.
+      StrCpy $R6 $4 1
+      StrCpy $R7 $4 1 -1
+      ${If} $R6 == '$\"'
+      ${AndIf} $R7 == '$\"'
+        StrCpy $4 $4 -1 1
+      ${EndIf}
+    ${EndIf}
     ${If} $ExistingInstall == ""
     ${OrIf} $4 == ""
       Goto update_install_not_found

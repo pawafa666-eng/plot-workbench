@@ -100,9 +100,9 @@ jobs:
       - name: Verify NSIS update directory selection
         shell: pwsh
         run: |
-          $compilers = @(Get-ChildItem "$env:LOCALAPPDATA\tauri" -Filter makensis.exe -Recurse)
-          if ($compilers.Count -ne 1) { throw "Expected the NSIS compiler used by Tauri" }
-          $env:WORKBENCH_MAKENSIS = $compilers[0].FullName
+          $compiler = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw "Expected the NSIS compiler used by Tauri" }
+          $env:WORKBENCH_MAKENSIS = $compiler
           python -m pytest -q tests/test_workbench_nsis_upgrade.py tests/test_nsis_template.py
           if ($LASTEXITCODE -ne 0) { throw "NSIS update directory selection failed" }
       - name: Install and verify without system Python on PATH

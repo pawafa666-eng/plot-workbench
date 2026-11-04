@@ -295,8 +295,16 @@ def main() -> None:
         raise SystemExit("Installer smoke requires the default install location to be empty.")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", type=Path, required=True)
+    parser.add_argument("--baseline-installer", type=Path)
+    parser.add_argument("--baseline-version")
     args = parser.parse_args()
     installer = args.installer.resolve(strict=True)
+    baseline = args.baseline_installer.resolve(strict=True) if args.baseline_installer else None
+    if bool(baseline) != bool(args.baseline_version):
+        parser.error("--baseline-installer and --baseline-version must be supplied together")
+    expected_version = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))[
+        "version"
+    ]
     with tempfile.TemporaryDirectory(prefix="plot-workbench-install-") as scratch:
         work = Path(scratch)
         install = work / "中文 安装目录" / "Plot Workbench"
@@ -325,7 +333,7 @@ def main() -> None:
         )
         # NSIS /D must be last and unquoted. shell=False passes this command line
         # directly to CreateProcess; no command interpreter parses the path.
-        command = subprocess.list2cmdline([str(installer), "/S"]) + f" /D={install}"
+        command = subprocess.list2cmdline([str(baseline or installer), "/S"]) + f" /D={install}"
         run(command, env)
         sidecar = install / "sidecar" / "Tavotto" / "Tavotto.exe"
         bundled = sidecar.parent / "_internal" / "runtime" / "python.exe"
@@ -338,11 +346,19 @@ def main() -> None:
             # first install chose a non-default Unicode path; the update must
             # overwrite that actual executable without receiving /D again.
             original_shell = shell.read_bytes()
-            shell.write_bytes(b"previous version sentinel")
+            if baseline:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+                    before_version, _ = winreg.QueryValueEx(key, "DisplayVersion")
+                if before_version != args.baseline_version:
+                    raise RuntimeError(f"Wrong baseline installed: {before_version}")
+            else:
+                shell.write_bytes(b"previous version sentinel")
             sentinel = install / "user-file-to-preserve.txt"
             sentinel.write_text("preserve", encoding="utf-8")
-            run([str(installer), "/P", "/UPDATE"], env)
-            if shell.read_bytes() != original_shell:
+            run([str(installer), "/P", "/UPDATE", "/ARGS"], env)
+            if baseline and shell.read_bytes() == original_shell:
+                raise RuntimeError("Update left the baseline executable unchanged")
+            if not baseline and shell.read_bytes() != original_shell:
                 raise RuntimeError(
                     "Update did not replace the executable in the original install directory"
                 )
@@ -352,8 +368,37 @@ def main() -> None:
                 raise RuntimeError("Update changed an unrelated file in the install directory")
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
                 location, _ = winreg.QueryValueEx(key, "InstallLocation")
+                after_version, _ = winreg.QueryValueEx(key, "DisplayVersion")
             if Path(location.strip('"')).resolve() != install.resolve():
                 raise RuntimeError(f"Update registered the wrong install directory: {location}")
+            if after_version != expected_version:
+                raise RuntimeError(f"Wrong updated version: {after_version}")
+            # The current registration must remain sufficient if the historical
+            # manufacturer cache has gone missing. This runs only in the clean CI user.
+            config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))
+            cache_key = rf"Software\{config['bundle']['publisher']}\{config['productName']}"
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, cache_key, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.DeleteValue(key, "")
+            updated_shell = shell.read_bytes()
+            if baseline:
+                old_update = subprocess.run(
+                    [str(baseline), "/S", "/UPDATE"], cwd=ROOT, env=env, timeout=600
+                )
+                if old_update.returncode != 2 or shell.read_bytes() != updated_shell:
+                    raise RuntimeError("Baseline did not reproduce the missing-cache rejection")
+                print("PASS: baseline reproduces missing-cache rejection without changing files")
+            run([str(installer), "/P", "/UPDATE", "/ARGS"], env)
+            if shell.read_bytes() != updated_shell or default_shell.exists():
+                raise RuntimeError("Update without the historical cache used the wrong directory")
+            if sentinel.read_text(encoding="utf-8") != "preserve":
+                raise RuntimeError("Repeated update changed an unrelated user file")
+            print(
+                f"PASS: real installer upgrade {args.baseline_version or expected_version} -> "
+                f"{after_version}; custom directory and user file preserved; cache optional",
+                flush=True,
+            )
             run(
                 [
                     str(bundled),

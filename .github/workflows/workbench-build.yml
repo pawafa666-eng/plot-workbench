@@ -110,7 +110,11 @@ jobs:
         run: |
           $installers = @(Get-ChildItem dist -Filter 'Plot-Workbench-*-Windows-x64-Setup.exe')
           if ($installers.Count -ne 1) { throw "Expected one Workbench installer, found $($installers.Count)" }
-          python scripts/workbench_installer_smoke.py --installer $installers[0].FullName
+          $baseline = Join-Path $env:RUNNER_TEMP 'Plot-Workbench-1.3.1-Windows-x64-Setup.exe'
+          $baselineUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/releases/download/v1.3.1/Plot-Workbench-1.3.1-Windows-x64-Setup.exe"
+          Invoke-WebRequest -Uri $baselineUrl -OutFile $baseline
+          if ((Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash -ne '72e589855cb2fe658b259acadf6e7a8fa42cabaa51f87813027fd06b1baacaad') { throw "Baseline installer SHA256 mismatch" }
+          python scripts/workbench_installer_smoke.py --installer $installers[0].FullName --baseline-installer $baseline --baseline-version 1.3.1
           if ($LASTEXITCODE -ne 0) { throw "Installer smoke test failed" }
       - name: Upload verified installer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

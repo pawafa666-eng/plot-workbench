@@ -141,6 +141,7 @@ jobs:
           path: |
             build/Tavotto/warn-*.txt
             build/workbench-installer-smoke/**
+            src-tauri/target/release/nsis/**/installer.nsi
           if-no-files-found: ignore
           retention-days: 7
       - name: Retain unverified candidate for local diagnosis

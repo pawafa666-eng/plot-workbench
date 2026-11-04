@@ -568,7 +568,7 @@ def test_generated_script_has_the_same_pages():
             )
 
     # 精简没有把要装的东西弄丢：sidecar / workerd / 内置 runtime 都在
-    assert '!define MAINBINARYNAME "Tavotto"' in code
+    assert f'!define MAINBINARYNAME "{CONFIG["mainBinaryName"]}"' in code
     assert re.search(r'^\s*File /a "/oname=', code, re.M), "中间脚本里没有任何 binaries/resources"
 
 

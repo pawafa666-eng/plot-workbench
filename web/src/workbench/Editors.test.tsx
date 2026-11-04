@@ -29,6 +29,13 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 async function renderPlot(initial: Plot = plot) { await act(async () => root.render(<TooltipProvider><PlotEditor initial={initial} templates={[]} onChanged={() => {}} onBack={() => {}} /></TooltipProvider>)) }
 
+it('requires a fresh verified run before saving a shared template draft', async () => {
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={{ id: 'imported', name: 'Shared', scope: 'global', favorite: false, code: 'print(1)', data: null, schema: DEFAULT_SCHEMA, revision: 0, validation_state: 'pending' }} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
+  expect(document.querySelector('[data-template-pending]')).not.toBeNull()
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.disabled).toBe(false)
+})
+
 it('selects every saved figure and exports the selected stem', async () => {
   await renderPlot()
   const second = document.querySelector<HTMLButtonElement>('[data-wb-output="figure_2"]')

@@ -588,7 +588,9 @@ class WorkbenchStore:
     def get_template(self, template_id):
         pid, path = self._find_template(template_id)
         record = read_json(path / "template.json")
-        revision_dir = inside(path, f"revisions/{record['revision']}")
+        revision_dir = inside(
+            path, "draft" if record["revision"] == 0 else f"revisions/{record['revision']}"
+        )
         payload = read_json(revision_dir / "record.json")
         record = {
             **payload,
@@ -605,10 +607,11 @@ class WorkbenchStore:
         return record
 
     def list_templates(self, project_id=None):
-        result = []
-        for pid in [None, project_id] if project_id else [None]:
-            result.extend(self.get_template(tid) for tid in self._library(pid)["templates"])
-        return result
+        with self.lock:
+            result = []
+            for pid in [None, project_id] if project_id else [None]:
+                result.extend(self.get_template(tid) for tid in self._library(pid)["templates"])
+            return result
 
     def commit_template(self, payload, artifacts=None, template_id=None):
         with self.lock:
@@ -655,6 +658,7 @@ class WorkbenchStore:
                     "updated_at": now(),
                 }
             )
+            meta.pop("validation_state", None)
             backups = _document_backups(
                 path / "template.json", self._library_dir(pid) / "library.json"
             )

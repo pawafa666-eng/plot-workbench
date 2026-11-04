@@ -118,6 +118,8 @@ def test_write_endpoints_default_deny(served):
         "/api/update/apply",
         "/api/engine/update_source",
         "/api/export",
+        "/api/workbench/library/export",
+        "/api/workbench/library/import",
     ):
         status, _, body = http_post_json(served.url(path), {})
         assert status == 401, f"{path} 未认证也放行了"

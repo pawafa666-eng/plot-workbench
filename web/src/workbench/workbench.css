@@ -68,3 +68,22 @@
 .wb-inline-palette-colors { display:flex; flex-wrap:wrap; gap:5px; }
 .wb-inline-palette-colors button { width:25px; height:25px; border:1px solid #33445526; border-radius:4px; cursor:pointer; }
 .wb-inline-palette-ramp { height:28px; border-radius:4px; margin-bottom:8px; }
+
+.wb-share-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+.wb-share-message { flex-basis:100%; max-width:380px; margin:0; color:var(--color-ink-2); font-size:12px; line-height:1.6; }
+.wb-share-filters { display:flex; gap:10px; margin-bottom:12px; }
+.wb-share-kind { width:180px; max-width:50%; flex-shrink:0; }
+.wb-share-filters > input { flex:1; min-width:0; }
+.wb-share-select-all { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.wb-share-list { max-height:440px; overflow:auto; border-top:1px solid var(--color-border); }
+.wb-share-row { display:flex; gap:12px; align-items:center; padding:12px 6px; border-bottom:1px solid var(--color-border); cursor:pointer; }
+.wb-share-row.is-selected { background:var(--color-surface-active); }
+.wb-share-row > img, .wb-share-swatches { width:84px; height:48px; flex-shrink:0; border-radius:4px; object-fit:contain; }
+.wb-share-swatches { display:flex; overflow:hidden; }
+.wb-share-swatches i { flex:1; }
+.wb-share-item-name { display:flex; flex-direction:column; min-width:0; gap:4px; overflow-wrap:anywhere; }
+.wb-share-item-name small { color:var(--color-ink-3); font-size:12px; }
+.wb-share-import { display:flex; flex-direction:column; gap:16px; }
+.wb-share-drop { display:flex; flex-direction:column; align-items:center; gap:12px; padding:32px 16px; border:1px dashed var(--color-border-control); border-radius:8px; background:var(--color-surface); text-align:center; }
+.wb-share-drop.is-dragging { background:var(--color-surface-active); border-color:var(--color-ink); }
+.wb-share-pending { display:inline-block; margin:4px 0; font-size:11px; color:var(--color-ink-3); }

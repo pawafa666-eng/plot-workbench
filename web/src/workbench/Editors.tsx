@@ -142,7 +142,8 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
   const preview = selectedOutput?.preview_url ?? ''
   const [run, setRun] = useState<Run | null>(resume?.run ?? null)
   const [savedFingerprint, setSavedFingerprint] = useState(resume?.savedFingerprint ?? (initial?.id ? fingerprintOf(initial.code, initial.data, initial.schema) : ''))
-  const [outputFingerprint, setOutputFingerprint] = useState(resume?.outputFingerprint ?? (initial?.id ? fingerprintOf(initial.code, initial.data, initial.schema) : ''))
+  const pendingValidation = initial?.validation_state === 'pending'
+  const [outputFingerprint, setOutputFingerprint] = useState(resume?.outputFingerprint ?? (initial?.id && !pendingValidation ? fingerprintOf(initial.code, initial.data, initial.schema) : ''))
   const [importOpen, setImportOpen] = useState(false)
   const [metadataOpen, setMetadataOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
@@ -187,13 +188,14 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
     setError('')
     try {
       const metadata = { name, category_id: categoryId || 'uncategorized', ...(!initial?.id ? { scope, project_id: scope === 'project' ? projectId : undefined } : {}) }
-      const payload = contentChanged || !initial?.id ? { ...metadata, code, data, schema, run_id: run?.runId } : metadata
+      const payload = contentChanged || !initial?.id || pendingValidation ? { ...metadata, code, data, schema, run_id: run?.runId } : metadata
       const template = initial?.id ? await patch<Template>(`/templates/${initial.id}`, payload) : await post<Template>('/templates', payload)
       setSavedFingerprint(fingerprint); onSaved(template)
     } catch (e) { setError(errorText(e)) }
   }
   return <div className="wb-template-editor" data-wb-template-editor>
-    <div className="wb-page-heading"><div><h1>{initial?.id ? '编辑模板' : '创建模板'}</h1><p>运行验证后保存模板。</p></div><div className="wb-toolbar"><Button onClick={() => { if (!contentChanged || window.confirm('模板代码或数据尚未保存，离开后将丢弃修改。')) onBack() }}>返回模板库</Button><Button variant="primary" disabled={!name.trim() || jobs.busy || ((contentChanged || !initial?.id) && !valid)} onClick={save} data-wb-template-save><Save />保存模板</Button></div></div>
+    <div className="wb-page-heading"><div><h1>{initial?.id ? '编辑模板' : '创建模板'}</h1><p>运行验证后保存模板。</p></div><div className="wb-toolbar"><Button onClick={() => { if (!contentChanged || window.confirm('模板代码或数据尚未保存，离开后将丢弃修改。')) onBack() }}>返回模板库</Button><Button variant="primary" disabled={!name.trim() || jobs.busy || ((contentChanged || !initial?.id || pendingValidation) && !valid)} onClick={save} data-wb-template-save><Save />保存模板</Button></div></div>
+    {pendingValidation && <p className="wb-muted" data-template-pending>此模板来自分享包，请先运行并验证后保存。</p>}
     <div className="wb-template-metadata"><label className="wb-name-input">模板名称<TextInput aria-label="模板名称" value={name} onChange={(e) => setName(e.target.value)} /></label><label className="wb-field-inline">存放位置<Select ariaLabel="存放位置" value={scope} disabled={!!initial?.id} onChange={(v) => { setScope(v as 'global' | 'project'); setCategoryId('uncategorized') }} options={[{ value: 'global', label: '全局模板库' }, ...(projectId || initial?.project_id ? [{ value: 'project', label: '项目模板库' }] : [])]} /></label><label className="wb-field-inline">分类<Select ariaLabel="模板分类" value={categoryId || 'uncategorized'} onChange={setCategoryId} options={[{ value: 'uncategorized', label: '未分类' }, ...categories.filter((c) => c.scope === scope && c.id !== 'uncategorized').map((c) => ({ value: c.id, label: c.name }))]} /></label><Button variant="secondary" disabled={jobs.busy} onClick={() => setMetadataOpen(true)}>数据规范</Button></div>
     <div className="wb-editor-bar"><div className="wb-toolbar"><input hidden ref={uploadRef} type="file" accept=".py" data-wb-template-upload onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then((text) => { setCode(text); if (!initial) setName(file.name.replace(/\.py$/i, '')) }) }} /><Button disabled={jobs.busy} onClick={() => uploadRef.current?.click()}><Upload />上传 Python</Button><Button variant="secondary" disabled={jobs.busy} onClick={() => { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } }} data-wb-template-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={jobs.busy} onClick={() => setImportOpen(true)}>导入示例数据</Button><Button disabled={!data} active={dataOpen} onClick={() => setDataOpen(!dataOpen)}>查看数据{data ? ` ${data.row_count} × ${data.column_count}` : ''}</Button><span className="wb-muted">支持普通脚本与 build_figure(data) 模板</span></div>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" data-wb-template-validate onClick={validate} data-wb-template-run><Play />运行并验证</Button>}</div>
     {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} />}

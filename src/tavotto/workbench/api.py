@@ -20,6 +20,7 @@ from . import VERSION, data as table_data
 from .data_process import run_operation
 from .palettes import PaletteStore
 from .rendering import RenderService
+from .sharing import MAX_BYTES as LIBRARY_UPLOAD_LIMIT, export_library, import_library
 from .store import WorkbenchError, WorkbenchStore, checked_id, inside
 
 TABLE_TTL = 15 * 60
@@ -175,6 +176,43 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def palettes():
         return jsonify({"palettes": manager.palettes.list()})
 
+    @bp.post("/library/export")
+    def export_shared_library():
+        body = _body()
+        with manager.lock:
+            project_id = body.get("project_id") or None
+            if project_id:
+                manager.store.get_project(project_id)
+            archive = export_library(
+                manager.store,
+                manager.palettes,
+                body.get("template_ids", []),
+                body.get("palette_ids", []),
+                project_id,
+            )
+        return send_file(
+            archive,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name="library-share.zip",
+        )
+
+    @bp.post("/library/import")
+    def import_shared_library():
+        upload = request.files.get("file")
+        if upload is None:
+            raise WorkbenchError("请选择或拖入分享 ZIP 文件")
+        raw = upload.stream.read(LIBRARY_UPLOAD_LIMIT + 1)
+        with manager.lock:
+            result = import_library(
+                manager.store,
+                manager.palettes,
+                raw,
+                request.form.get("scope", "global"),
+                request.form.get("project_id") or None,
+            )
+        return jsonify(result)
+
     @bp.post("/palettes")
     def create_palette():
         return jsonify(manager.palettes.save(_body()))
@@ -247,11 +285,12 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.get("/templates")
     def templates():
-        project_id = request.args.get("project_id") or None
-        if project_id:
-            manager.store.get_project(project_id)
-        result = [_public(item) for item in manager.store.list_templates(project_id)]
-        category_list = manager.store.list_categories(project_id)
+        with manager.lock:
+            project_id = request.args.get("project_id") or None
+            if project_id:
+                manager.store.get_project(project_id)
+            result = [_public(item) for item in manager.store.list_templates(project_id)]
+            category_list = manager.store.list_categories(project_id)
         category_id = request.args.get("category_id")
         if request.args.get("favorite", "").lower() in ("1", "true", "yes"):
             result = [item for item in result if item.get("favorite")]
@@ -623,7 +662,10 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             record = manager.store.get_template(entity_id)
             if record["revision"] != revision:
                 raise WorkbenchError("模板预览版本已过期", "artifact_not_found", 404)
-            directory = inside(manager.store.template_dir(entity_id), f"revisions/{revision}")
+            directory = inside(
+                manager.store.template_dir(entity_id),
+                "draft" if revision == 0 else f"revisions/{revision}",
+            )
         else:
             raise WorkbenchError("未知产物类型", "artifact_not_found", 404)
         path = inside(directory, filename)

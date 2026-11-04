@@ -18,6 +18,7 @@ export interface Project { id: string; name: string; path: string; working_direc
 export interface Template {
   id: string; name: string; scope: 'global' | 'project'; project_id?: string; category_id?: string; favorite: boolean
   code: string; data: Snapshot | null; schema: Schema; preview_url?: string; outputs?: FigureOutput[]; revision: number
+  validation_state?: 'pending'
 }
 export interface Category { id: string; name: string; scope: 'global' | 'project'; project_id?: string }
 export interface Status { root: string; version: string; projects: Project[] }
@@ -41,8 +42,8 @@ export const post = <T,>(path: string, body: unknown = {}) => api<T>(path, { met
 export const patch = <T,>(path: string, body: unknown) => api<T>(path, { method: 'PATCH', body: JSON.stringify(body) })
 export const remove = (path: string) => api<unknown>(path, { method: 'DELETE' })
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
-export async function download(path: string, filename: string): Promise<void> {
-  const response = await fetch(`/api/workbench${path}`, { credentials: 'same-origin' })
+export async function download(path: string, filename: string, init: RequestInit = {}): Promise<void> {
+  const response = await fetch(`/api/workbench${path}`, { credentials: 'same-origin', ...init })
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message ?? body.error ?? '导出失败') }
   const href = URL.createObjectURL(await response.blob())
   const link = document.createElement('a'); link.href = href; link.download = filename; link.click()

@@ -109,4 +109,4 @@
 ## 当前状态
 
 - 三批范围和验收计划已整理。
-- 第一批功能已接入，按用户决定准备 1.3.5；实现和验收记录见 [first-update-status.md](first-update-status.md)。第二、三批尚未实施。
+- 第一批已完成，按用户决定发布为 [1.3.5](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.3.5)，并完成本机更新；实现和验收记录见 [first-update-status.md](first-update-status.md)。第二、三批按本计划保留后续交付范围。

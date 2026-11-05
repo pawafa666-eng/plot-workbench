@@ -14,10 +14,10 @@
 | 首页检索、缩略图、时间、列表/卡片 | 已验证 | ProjectHome.tsx、WorkspacePanels.test.tsx；按修改时间排序、路径搜索 |
 | 侧栏折叠、画布中心布局、数据/代码展开、密度 | 已实现 | 布局与偏好持久化；桌面门禁覆盖折叠、紧凑模式、代码/画布切换 |
 | 异常退出后恢复，不自动执行或视为验证通过 | 已验证 | 独立服务强制退出重启后 UI 恢复；未运行、保存置灰；显式运行后保存 |
-| 100%、125%、150% 与窄窗口交互 | 浏览器已验证，发行桌面待验 | 三档 Edge 真实 devicePixelRatio 与 1000×720 响应式检查通过；同一 UI 脚本接入发行安装器，保存截图与 layout.json |
+| 100%、125%、150% 与窄窗口交互 | 已验证 | 三档真实安装版 WebView2、1000×720 响应式检查通过；工具栏、属性栏、设置、历史与导航切库均过门禁 |
 | 现有项目、分享包、认证与正式保存校验兼容 | 已验证 | 全部 workbench 后端、浏览器认证与更新清单回归；前端 137 项通过；Windows 索引同步修复后相关 83 项回归通过 |
-| 普通 Explorer 环境的安装/升级及数据保持 | 待验证 | |
-| 签名构建、五项附件及公开 1.3.5 更新通道 | 待验证 | |
+| 普通 Explorer 环境的安装/升级及数据保持 | 已验证 | 本机 1.3.4 → 1.3.5 原自选目录更新，安装器退出 0；窗口和 sidecar 就绪；启动后七项原有数据清单 SHA-256 不变，无默认目录第二份程序 |
+| 签名构建、五项附件及公开 1.3.5 更新通道 | 已验证并发布 | 五个实际下载附件、安装器 SHA-256、更新归档与安装器一致、minisign 加密验证及旧版密钥连续性、公开 latest.json 均通过 |
 
 本记录中的“待实现/待验证”必须由对应实现和实际验收证据替换后，才能认定目标完成。
 
@@ -30,3 +30,11 @@
 - 横向溢出只使用 `web/e2e/overflow.ts`。画布世界坐标层允许平移缩放，其零尺寸原点不适用 HTML 布局溢出判据；图内工具栏、属性栏使用该尺，裁切视口另做窗口内包含检查。
 - 本机诊断、隔离项目与截图位于 `D:\download\plot-workbench-first-update`；发行签名、附件和公开通道证明单独保存。用户项目和 `styles/` 未纳入提交。
 - 发行版的三档缩放由测试进程显式传入 `--edge-webview-switches`，每档使用独立 WebView profile；应用正常启动参数保持不变。Wry 设置的 SDK 参数会覆盖环境变量，首次发行验收因此拒绝通过；改用 [WebView2 官方宿主参数](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2environmentoptions) 后，已在本机现有正式桌面版上验证 CDP、125% 实际像素比例和隔离数据目录。
+
+## 发行证明
+
+- [1.3.5 已公开发布](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.3.5)，发行代码提交：`095b6f6838fb05b6998e4508faf7e82b300873b3`。
+- [发行构建与真实安装验收](https://github.com/pawafa666-eng/plot-workbench/actions/runs/41990247644) 两项 job 均成功；包含 1.3.1 → 1.3.5 的中文自选目录升级、缺失历史缓存复现与修复、三档界面缩放、实际渲染与卸载。
+- 安装器 SHA-256：`0ae7b26b68357049b785e2bade1a7b0081ff8da79f758e326b2877419d08e196`。
+- 普通桌面验证从 `explorer.exe` 启动，更新后程序为 1.3.5，前端构建为 `index-CsRTcDci`；安装前后及正常启动后的数据索引保持一致。
+- 本机证明文件位于 `D:\download\plot-workbench-release\1.3.5`：`verification.json`、`native-verification.json`、`ordinary-desktop-update-verified.json`、`ordinary-health-verified.json`、`published-endpoint-verified.json`。这些生成文件和用户路径不加入 Git。

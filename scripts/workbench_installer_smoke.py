@@ -11,11 +11,15 @@ import ctypes
 import importlib.util
 import json
 import os
+import re
 import secrets
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -40,53 +44,177 @@ def alive(pid: int) -> bool:
         kernel.CloseHandle(ctypes.c_void_p(handle))
 
 
-def close_window(pid: int) -> None:
+def native_windows(pid: int) -> list[dict]:
     user = ctypes.windll.user32
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    windows = []
 
     @callback_type
     def visit(window, _):
         owner = ctypes.c_ulong()
         user.GetWindowThreadProcessId(ctypes.c_void_p(window), ctypes.byref(owner))
         if owner.value == pid:
-            user.PostMessageW(ctypes.c_void_p(window), 0x0010, 0, 0)
+            title = ctypes.create_unicode_buffer(512)
+            kind = ctypes.create_unicode_buffer(128)
+            user.GetWindowTextW(ctypes.c_void_p(window), title, len(title))
+            user.GetClassNameW(ctypes.c_void_p(window), kind, len(kind))
+            windows.append(
+                {
+                    "handle": window,
+                    "title": title.value,
+                    "class": kind.value,
+                    "visible": bool(user.IsWindowVisible(ctypes.c_void_p(window))),
+                }
+            )
         return True
 
     user.EnumWindows(visit, 0)
+    return windows
 
 
-def shell_smoke(shell: Path, env: dict) -> None:
-    before = set(Path(tempfile.gettempdir()).glob("tavotto-handshake-*.json"))
-    process = subprocess.Popen([str(shell)], env=env, cwd=shell.parent)
+def close_window(pid: int) -> int:
+    # EnumWindows includes the single-instance and Tao event-target windows.
+    # Both can carry WS_VISIBLE despite being internal message sinks. Sending
+    # WM_CLOSE to those destroys dispatch and strands an otherwise healthy app.
+    # The native user-facing frames created by this pinned Tauri runtime use
+    # this class; never send input to another process or another window class.
+    windows = [
+        window
+        for window in native_windows(pid)
+        if window["visible"] and window["class"] == "Tauri Window"
+    ]
+    for window in windows:
+        if not ctypes.windll.user32.PostMessageW(ctypes.c_void_p(window["handle"]), 0x0010, 0, 0):
+            raise RuntimeError("Could not post WM_CLOSE to the installed native window")
+    return len(windows)
+
+
+def shell_listeners(parent_pid: int, sidecar: Path) -> list[tuple[int, int]]:
+    """Read listeners owned by this shell's exact installed child executable.
+
+    Rust consumes and removes the handshake immediately. It is not a durable
+    readiness signal for an observer polling independently of the shell.
+    """
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    query = f"""
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+    $wbChildren = @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = {int(parent_pid)}')
+    $wbSockets = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
+    @($wbChildren | ForEach-Object {{
+      $wbProcess = $_
+      $wbPorts = @($wbSockets | Where-Object {{
+        $_.OwningProcess -eq $wbProcess.ProcessId -and $_.LocalAddress -eq '127.0.0.1'
+      }} | ForEach-Object LocalPort)
+      [pscustomobject]@{{pid=$wbProcess.ProcessId; exe=$wbProcess.ExecutablePath; ports=$wbPorts}}
+    }}) | ConvertTo-Json -Compress -Depth 4
+    """
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", query],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=20,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Could not inspect the desktop child listeners: {result.stderr}")
+    records = json.loads(result.stdout.strip() or "[]")
+    if isinstance(records, dict):
+        records = [records]
+    expected = os.path.normcase(str(sidecar.resolve()))
+    return [
+        (int(record["pid"]), int(port))
+        for record in records
+        if record.get("exe") and os.path.normcase(str(Path(record["exe"]).resolve())) == expected
+        for port in record.get("ports", [])
+        if 0 < int(port) < 65536
+    ]
+
+
+def shell_smoke(shell: Path, env: dict, *, scale: float | None = None) -> None:
+    diagnostics = (
+        ROOT / "build/workbench-installer-smoke" / (f"shell-{scale}" if scale else "shell")
+    )
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    child_env = dict(env)
+    command = [str(shell)]
+    if scale:
+        with socket.socket() as lease:
+            lease.bind(("127.0.0.1", 0))
+            debug_port = lease.getsockname()[1]
+        browser_flags = (
+            f"--remote-debugging-port={debug_port} --remote-debugging-address=127.0.0.1 "
+            f"--force-device-scale-factor={scale}"
+        )
+        # Wry supplies its own AdditionalBrowserArguments, which supersede the
+        # environment variable on current WebView2. The SDK's host-command-line
+        # switches are processed last. This is an explicit test launch only.
+        command.append(f"--edge-webview-switches={browser_flags}")
+        child_env.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
+        child_env["WEBVIEW2_USER_DATA_FOLDER"] = str(
+            Path(env["TAVOTTO_DATA_DIR"]).parent / f"webview-{scale}"
+        )
+    output = (diagnostics / "shell.log").open("wb")
+    process = subprocess.Popen(
+        command, env=child_env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
+    )
     side_pid = None
     try:
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise RuntimeError(f"Desktop shell exited early: {process.returncode}")
-            for handshake in (
-                set(Path(tempfile.gettempdir()).glob("tavotto-handshake-*.json")) - before
+            for child_pid, port in shell_listeners(
+                process.pid, shell.parent / "sidecar/Tavotto/Tavotto.exe"
             ):
-                # The shell includes its own PID in the public handshake filename.
-                if not handshake.name.startswith(f"tavotto-handshake-{process.pid}-"):
-                    continue
                 try:
-                    state = json.loads(handshake.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if state.get("ready"):
-                    side_pid = state["pid"]
-                    with urllib.request.urlopen(
-                        f"http://127.0.0.1:{state['port']}/", timeout=10
-                    ) as response:
+                    base = f"http://127.0.0.1:{port}"
+                    with urllib.request.urlopen(f"{base}/", timeout=10) as response:
                         assert response.status == 200
-                    break
+                    try:
+                        urllib.request.urlopen(f"{base}/api/session/ping", timeout=10)
+                    except urllib.error.HTTPError as error:
+                        if error.code != 401:
+                            raise
+                    else:
+                        raise RuntimeError("Desktop sidecar authentication is not enforced")
+                except (OSError, urllib.error.URLError):
+                    continue
+                side_pid = child_pid
+                break
             if side_pid:
                 break
             time.sleep(0.25)
         if not side_pid:
             raise RuntimeError("Desktop shell did not start its authenticated sidecar")
-        close_window(process.pid)
+        if scale:
+            # The harness resolves Node before removing developer runtimes from
+            # the application's PATH. The installed app still uses its own runtime.
+            node = shutil.which("node")
+            if not node:
+                raise RuntimeError("Node is required for native WebView layout verification")
+            subprocess.run(
+                [
+                    node,
+                    str(ROOT / "web/scripts/workbench-native-smoke.mjs"),
+                    str(debug_port),
+                    str(scale),
+                    str(diagnostics),
+                ],
+                cwd=ROOT,
+                env=child_env,
+                timeout=300,
+                check=True,
+            )
+        deadline = time.monotonic() + 30
+        while not close_window(process.pid):
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The installed desktop did not expose a visible native window")
+            time.sleep(0.25)
         process.wait(timeout=30)
         deadline = time.monotonic() + 20
         while alive(side_pid) and time.monotonic() < deadline:
@@ -95,9 +223,22 @@ def shell_smoke(shell: Path, env: dict) -> None:
             raise RuntimeError(f"Orphaned sidecar after desktop close: {side_pid}")
         print("PASS: installed desktop shell -> sidecar -> clean close")
     finally:
+        (diagnostics / "windows.json").write_text(
+            json.dumps(native_windows(process.pid), ensure_ascii=False, indent=2), "utf-8"
+        )
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10)
+        output.close()
+        conf = ROOT / "src-tauri/tauri.conf.json"
+        if conf.is_file():
+            app_id = json.loads(conf.read_text("utf-8"))["identifier"]
+            local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+            log = local / app_id / "logs/sidecar.log"
+            if log.is_file():
+                text = log.read_text("utf-8", errors="replace")[-128_000:]
+                text = re.sub(r"dnonce=[A-Za-z0-9_-]+", "dnonce=[redacted]", text)
+                (diagnostics / "sidecar.log").write_text(text, "utf-8")
 
 
 def workbench_smoke(sidecar: Path, env: dict, work: Path) -> None:
@@ -176,10 +317,35 @@ def workbench_smoke(sidecar: Path, env: dict, work: Path) -> None:
 def main() -> None:
     if sys.platform != "win32":
         raise SystemExit("This installer smoke runs on Windows.")
+    import winreg
+
+    # This smoke installs and uninstalls the actual product, including its
+    # registry keys. Never run it over a developer's existing installation.
+    uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Plot Workbench"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+            existing, _ = winreg.QueryValueEx(key, "UninstallString")
+    except FileNotFoundError:
+        existing = ""
+    if existing:
+        raise SystemExit(
+            "Installer smoke requires a clean Windows user without Plot Workbench installed."
+        )
+    default_shell = Path(os.environ["LOCALAPPDATA"]) / "Plot Workbench" / "PlotWorkbench.exe"
+    if default_shell.exists():
+        raise SystemExit("Installer smoke requires the default install location to be empty.")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", type=Path, required=True)
+    parser.add_argument("--baseline-installer", type=Path)
+    parser.add_argument("--baseline-version")
     args = parser.parse_args()
     installer = args.installer.resolve(strict=True)
+    baseline = args.baseline_installer.resolve(strict=True) if args.baseline_installer else None
+    if bool(baseline) != bool(args.baseline_version):
+        parser.error("--baseline-installer and --baseline-version must be supplied together")
+    expected_version = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))[
+        "version"
+    ]
     with tempfile.TemporaryDirectory(prefix="plot-workbench-install-") as scratch:
         work = Path(scratch)
         install = work / "中文 安装目录" / "Plot Workbench"
@@ -208,7 +374,7 @@ def main() -> None:
         )
         # NSIS /D must be last and unquoted. shell=False passes this command line
         # directly to CreateProcess; no command interpreter parses the path.
-        command = subprocess.list2cmdline([str(installer), "/S"]) + f" /D={install}"
+        command = subprocess.list2cmdline([str(baseline or installer), "/S"]) + f" /D={install}"
         run(command, env)
         sidecar = install / "sidecar" / "Tavotto" / "Tavotto.exe"
         bundled = sidecar.parent / "_internal" / "runtime" / "python.exe"
@@ -217,6 +383,63 @@ def main() -> None:
             for path in (sidecar, bundled, shell, install / "LICENSE", install / "ATTRIBUTION.txt"):
                 if not path.is_file():
                     raise RuntimeError(f"Missing installed artifact: {path}")
+            # Exercise the same /UPDATE path used by the desktop updater. The
+            # first install chose a non-default Unicode path; the update must
+            # overwrite that actual executable without receiving /D again.
+            original_shell = shell.read_bytes()
+            if baseline:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+                    before_version, _ = winreg.QueryValueEx(key, "DisplayVersion")
+                if before_version != args.baseline_version:
+                    raise RuntimeError(f"Wrong baseline installed: {before_version}")
+            else:
+                shell.write_bytes(b"previous version sentinel")
+            sentinel = install / "user-file-to-preserve.txt"
+            sentinel.write_text("preserve", encoding="utf-8")
+            run([str(installer), "/P", "/UPDATE", "/ARGS"], env)
+            if baseline and shell.read_bytes() == original_shell:
+                raise RuntimeError("Update left the baseline executable unchanged")
+            if not baseline and shell.read_bytes() != original_shell:
+                raise RuntimeError(
+                    "Update did not replace the executable in the original install directory"
+                )
+            if default_shell.exists():
+                raise RuntimeError("Update created a second installation in the default directory")
+            if sentinel.read_text(encoding="utf-8") != "preserve":
+                raise RuntimeError("Update changed an unrelated file in the install directory")
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
+                location, _ = winreg.QueryValueEx(key, "InstallLocation")
+                after_version, _ = winreg.QueryValueEx(key, "DisplayVersion")
+            if Path(location.strip('"')).resolve() != install.resolve():
+                raise RuntimeError(f"Update registered the wrong install directory: {location}")
+            if after_version != expected_version:
+                raise RuntimeError(f"Wrong updated version: {after_version}")
+            # The current registration must remain sufficient if the historical
+            # manufacturer cache has gone missing. This runs only in the clean CI user.
+            config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))
+            cache_key = rf"Software\{config['bundle']['publisher']}\{config['productName']}"
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, cache_key, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.DeleteValue(key, "")
+            updated_shell = shell.read_bytes()
+            if baseline:
+                old_update = subprocess.run(
+                    [str(baseline), "/S", "/UPDATE"], cwd=ROOT, env=env, timeout=600
+                )
+                if old_update.returncode != 2 or shell.read_bytes() != updated_shell:
+                    raise RuntimeError("Baseline did not reproduce the missing-cache rejection")
+                print("PASS: baseline reproduces missing-cache rejection without changing files")
+            run([str(installer), "/P", "/UPDATE", "/ARGS"], env)
+            if shell.read_bytes() != updated_shell or default_shell.exists():
+                raise RuntimeError("Update without the historical cache used the wrong directory")
+            if sentinel.read_text(encoding="utf-8") != "preserve":
+                raise RuntimeError("Repeated update changed an unrelated user file")
+            print(
+                f"PASS: real installer upgrade {args.baseline_version or expected_version} -> "
+                f"{after_version}; custom directory and user file preserved; cache optional",
+                flush=True,
+            )
             run(
                 [
                     str(bundled),
@@ -226,7 +449,17 @@ def main() -> None:
                 ],
                 env,
             )
-            run([sys.executable, "scripts/smoke_desktop.py", "--sidecar", str(sidecar)], env)
+            run(
+                [
+                    sys.executable,
+                    "scripts/smoke_desktop.py",
+                    "--sidecar",
+                    str(sidecar),
+                    "--diagnostics",
+                    str(ROOT / "build" / "workbench-installer-smoke" / "desktop"),
+                ],
+                env,
+            )
             run(
                 [
                     sys.executable,
@@ -248,7 +481,8 @@ def main() -> None:
                 env,
             )
             workbench_smoke(sidecar, env, work / "workbench-api")
-            shell_smoke(shell, env)
+            for scale in (1.0, 1.25, 1.5):
+                shell_smoke(shell, env, scale=scale)
         finally:
             uninstaller = install / "uninstall.exe"
             if uninstaller.is_file():

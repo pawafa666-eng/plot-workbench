@@ -62,9 +62,8 @@ const verdict = () =>
 /**
  * 基线：一个已经拿到状态、什么都没发生的浏览器通道。
  *
- * **两条 effect 必须被摆平**：`status` 为空时组件会自己 `check(false)`，
- * `desktopChecked` 为假时会自己 `checkDesktop()`——两者都会真的去 fetch，
- * 让用例变成在测网络。这里把动作换成 no-op，再由每条用例摆自己的状态。
+ * `status` 为空时页面会读取本地更新状态；所有普通 UI fixture 都提前 seed，
+ * 不让它们变成网络用例。桌面 Releases 检查只应由按钮触发，专门用例会断言这条路径。
  */
 function seed(patch: Record<string, unknown> = {}) {
   useUpdateStore.setState({
@@ -137,6 +136,21 @@ describe('「最新」只说到上一次检查那一刻', () => {
     await render()
     expect(verdict()).toBe('unknown')
     expect(text()).toContain(st('update.lastCheckedUnknown'))
+  })
+
+  it('桌面设置只有在点击检查按钮后才请求更新', async () => {
+    const checkDesktop = vi.fn(async () => {})
+    seed({
+      status: { current: '1.0.0', desktop: true, auto_check: false } as never,
+      checkDesktop,
+    })
+    await render()
+    expect(checkDesktop).not.toHaveBeenCalled()
+
+    await act(async () => {
+      byLabel(st('update.checkNow'))!.click()
+    })
+    expect(checkDesktop).toHaveBeenCalledTimes(1)
   })
 
   it('桌面通道查过没有新版：结论带上那一刻', async () => {
@@ -376,7 +390,7 @@ describe('完成', () => {
 })
 
 describe('版本号不依赖更新接口', () => {
-  it('更新接口失败（status 取不到）时，关于页的产品头仍显示版本', async () => {
+  it.each([undefined, '1.0.5'])('更新接口失败时优先显示应用版本 %s', async (appVersion) => {
     seed({ status: null })
     vi.stubGlobal(
       'fetch',
@@ -384,7 +398,7 @@ describe('版本号不依赖更新接口', () => {
         String(input).includes('/api/version')
           ? Promise.resolve({
               ok: true,
-              json: () => Promise.resolve({ build: 'dev', version: '0.99.1' }),
+              json: () => Promise.resolve({ build: 'dev', version: '0.99.1', app_version: appVersion }),
             } as Response)
           : Promise.reject(new Error('更新接口不通')),
       ),
@@ -396,6 +410,6 @@ describe('版本号不依赖更新接口', () => {
       root.render(<PrivacyAboutSettings />)
     })
     await act(async () => {})
-    expect(text()).toContain('v0.99.1')
+    expect(text()).toContain(`v${appVersion ?? '0.99.1'}`)
   })
 })

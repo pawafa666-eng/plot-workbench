@@ -16,6 +16,7 @@ import hashlib
 import math
 import numbers
 import os
+import re
 import sys
 import weakref
 
@@ -47,6 +48,32 @@ import tickmodel
 from axestraversal import ordered_axes
 from colorbarmodel import ColorbarProxy
 from tickmodel import TickLabel, TickSet
+
+
+class WorkbenchPaletteColormap(mcolors.ListedColormap):
+    """Bounded discrete map created from a saved Workbench palette."""
+
+
+def _palette_colormap(value):
+    """Decode an immutable palette snapshot at the worker boundary."""
+    if not isinstance(value, dict):
+        return value
+    if set(value) != {"kind", "mode", "colors"} or value["kind"] != "workbench_palette_v1":
+        raise ValueError("invalid palette color map")
+    colors = value["colors"]
+    if (
+        value["mode"] not in ("continuous", "discrete")
+        or not isinstance(colors, list)
+        or not 2 <= len(colors) <= 1024
+        or any(not isinstance(c, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", c) for c in colors)
+    ):
+        raise ValueError("invalid palette colors")
+    # Include all colors, without a lossy hash, so the frontend can reject
+    # stale facts while a different palette is still rendering.
+    name = "pwb1-" + value["mode"] + "-" + "".join(c[1:].upper() for c in colors)
+    if value["mode"] == "discrete":
+        return WorkbenchPaletteColormap(colors, name=name)
+    return mcolors.LinearSegmentedColormap.from_list(name, colors, N=max(256, len(colors)))
 
 
 def _layout_only_image_draw(self, renderer, *args, **kwargs):  # noqa: ANN001, ARG001
@@ -4853,10 +4880,11 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                             state.alias_seeded.add(nkey)
                         except Exception:  # noqa: BLE001 — 采不到就退回旧行为
                             pass
+                setter_value = _palette_colormap(value) if prop == "cmap" else value
                 if getattr(setter, "_needs_state", False):
-                    setter(artist, value, state)
+                    setter(artist, setter_value, state)
                 else:
-                    setter(artist, value)
+                    setter(artist, setter_value)
                 state.applied[key] = value
                 # 重新落成了请求值：欠的还原一笔勾销（originals 一直留着，仍是脚本原样）
                 state.unrestored.discard(key)

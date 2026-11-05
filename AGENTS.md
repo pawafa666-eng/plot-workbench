@@ -8,6 +8,10 @@ instructions below. Preserve AGPL attribution, engine contracts, session auth,
 worker isolation and transactional verification. Work directly in this requested
 workspace, on workbench/v1. User datasets and generated artifacts never enter Git.
 
+日常修改先完成约定范围并验证；未经用户明确要求，不升版、不创建或推送标签、
+不发布 Release、不分发安装包。完成并通过测试后，由用户决定是否发布及版本号；
+Tag 只准备已验证草稿，用户明确决定后手动公开。唯一细则：`docs/workbench/updating.md`。
+
 # Tavotto — inherited repository rules
 
 本文件是每次会话都要读的那一份，只放四样：任务路由、跨仓库不变量、验证入口、

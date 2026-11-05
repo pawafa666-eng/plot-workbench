@@ -3,7 +3,7 @@
 > 原文出自 `.github/AGENTS.md`「CI 分层（1.0 稳定化，2026-08-21 起）」（2026-09-18 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
-CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
+CI 按**发生时机**分工（Tavotto 上游 CI 定义记录完整工作流图，2026-08-25
 Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
 frontend / workerd / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行
 点（backend-platforms / package ×3 / 两个真产物冒烟，Merge Queue 对「最新
@@ -24,6 +24,8 @@ codeql.yml 的 `cancel-in-progress` **只对 PR 开**：merge_group 候选与 ma
 
 四条 workflow 的顶层 env 钉 `TAVOTTO_NO_TELEMETRY=1`——**CI 绝不产生真实的
 产品事件**（细节见 `src/tavotto/AGENTS.md` 的遥测一节）。
+
+Plot Workbench fork 当前只在 `.github/workflows/workbench-build.yml` 定义 Windows 构建与更新发布；本文件其余 PR、merge queue、nightly 和多平台发布流程是上游规则背景，不是本 fork 的执行配置。
 
 **PR 级 CI 只对 base 是 main 的 PR 触发**（2026-09-21 用户拍板）：监听 `pull_request`
 的四个 workflow（`ci.yml` / `codeql.yml` / `pr-conflict-domains.yml` / `private-python-targets.yml`）

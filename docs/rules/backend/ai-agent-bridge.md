@@ -1,5 +1,7 @@
 # 编码 Agent 桥
 
+2026-10-28：Codex 的完整提示词通过 `SpawnSpec.stdin_text` 声明，由桥写入数据缓存目录内的临时 UTF-8 文件，以有限 stdin 交给 `codex exec -`；不进入 Windows 的命令行长度预算。子进程只拿到这份独立文件及 EOF，绝不继承桌面 sidecar 的父进程死亡管道，也不增加交互输入能力。其他适配器未声明此字段时仍使用 DEVNULL，探测／登录状态检查继续一律 DEVNULL。旧的 `(argv, env)` 解包保持兼容。看护：`tests/test_ai_prompt_transport.py`。
+
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 
@@ -105,9 +107,9 @@
   用户在别的终端里跑 claude/codex 必须还是他自己那套）。密钥存用户配置
   （目录权限收到 0700），接口一律只回「有没有 + 尾四位」。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
-  `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端
+  `[profiles.*].model`，并追加同目录 `models_cache.json` 中公开可选的模型，绝不在源码里写模型名**。缓存只提供选择项，不证明所选 CLI／账号可调用；不改变配置的默认模型，也不改写用户配置。OpenAI 换代后旧名会被服务端
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a
-  ChatGPT account.`）；读不到就交白卷，让 CLI 用自己的默认值。强度档位
+  ChatGPT account.`）；配置与缓存都读不到就交白卷，让 CLI 用自己的默认值。强度档位
   minimal/low/medium/high/max 是 CLI 侧开关，与模型清单无关。
   前端 `aiStore.prunePrefs` 在每次探测后丢弃 localStorage 里已失效的选择，
   否则用户会永远卡在一个报错的旧模型上（vitest + pytest 双侧看护）。

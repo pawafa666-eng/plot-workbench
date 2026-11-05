@@ -31,7 +31,6 @@ import { CanvasHud, NotificationRail } from '@/components/StatusBar'
 import { PerfProbeHud } from '@/components/PerfProbeHud'
 import { TopBar } from '@/components/TopBar'
 import { UpdateBanner } from '@/components/UpdateBanner'
-import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
@@ -59,7 +58,6 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
-import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { startLayoutAutoReflow } from '@/store/actions'
@@ -82,9 +80,6 @@ export function App() {
 
   useEffect(() => {
     void useProjectStore.getState().init()
-    // 静默取一次版本状态（有新版本才弹 UpdateNoticeDialog、点顶栏圆点）。
-    // 桌面与浏览器是两条互斥的升级通道，由 checkUpdateOnStartup 决定查哪一条
-    checkUpdateOnStartup()
     // 渲染环境状态：缺 matplotlib 时属性栏与设置里都要能给出引导
     void useEnvStore.getState().refresh()
     // 匿名用量统计的同意态。**只是读一下**——没同意之前后端一个事件都不发，
@@ -108,8 +103,6 @@ export function App() {
       <>
         <ProjectPicker />
         <TelemetryConsentDialog />
-        {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
-        <UpdateNoticeDialog />
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
             确认屏不能等到用户先挑完项目才出现 */}
         <NativeConfirmDialog />
@@ -310,7 +303,6 @@ function Workspace() {
         <ScriptAnswersDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
-        <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />
         <ConfirmDialog />

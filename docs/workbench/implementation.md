@@ -20,8 +20,10 @@ the AGPL-3.0-only license and upstream attribution.
 - `web/src/workbench/` contains the Chinese project, template, import and editing
   interface. The Tavotto canvas is embedded in the same desktop window.
 
-Plot code implements `build_figure(data: pandas.DataFrame)` and returns one
-Matplotlib `Figure`. A template can optionally provide `example_data()`. Imported
+Plot code runs as a normal Matplotlib script and may produce multiple Figures.
+Function-only v1 templates can still implement `build_figure(data)` and optional
+`example_data()`. `execution.py` collects distinct Figures in creation order,
+including closed figures, inside the existing safe worker. Imported
 tables are copied into the project; data is never linked to a changing source
 file. The table preview is capped at 50 × 50 cells while the full selection is
 kept for rendering.
@@ -39,5 +41,9 @@ installs into a non-ASCII path with system Python removed from `PATH`, exercises
 the authenticated project/data/render/export API, checks the desktop shell, and
 verifies uninstall before uploading the installer artifact.
 
-User projects, templates, source tables and exports live in the selected local
-data directory. They are not included in the public repository or installer.
+Each project chooses an existing working folder; owned files live in its
+`.plot-workbench/` child. Folder manifests use relative paths and legacy v1
+projects remain supported. Per-output patch maps retain independent Tavotto edits
+while the common original source stays frozen. Global template storage and the
+recent project registry remain in the chosen library directory. User data is not
+included in the public repository or installer.

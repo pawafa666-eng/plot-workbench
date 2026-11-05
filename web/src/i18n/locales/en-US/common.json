@@ -10,6 +10,16 @@
     "reload": "Reload",
     "save": "Save"
   },
+  "palettePicker": {
+    "title": "Palettes",
+    "empty": "No saved palettes",
+    "choose": "Choose a palette",
+    "mode": "Color map mode",
+    "continuous": "Continuous",
+    "discrete": "Discrete",
+    "apply": "Apply palette",
+    "tooFew": "A color map needs at least two colors"
+  },
   "colorField": {
     "picker": "{{label}}: colour picker",
     "none": "None"

@@ -1,3 +1,5 @@
 """Plot Workbench application layer; Tavotto's engine remains the renderer."""
 
-VERSION = "0.1.0"
+from tavotto.engine.brand import WORKBENCH_VERSION
+
+VERSION = WORKBENCH_VERSION

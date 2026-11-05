@@ -21,6 +21,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 # Windows 上 stdout 一旦不是真控制台（被 CI 捕获 / 管道 / 重定向）就退回系统区域
 # 编码（cp1252/cp936），第一句中文或 ✓ 的输出就 UnicodeEncodeError——脚本明明
@@ -109,29 +110,65 @@ def build_manifest(
             key: {
                 # 签名文件里是 base64 的 minisign 签名，原样塞进去
                 "signature": sig.read_text(encoding="utf-8").strip(),
-                "url": RELEASE_URL.format(owner=owner, repo=repo, tag=tag, name=pkg.name),
+                # GitHub normalizes spaces in uploaded asset names to periods.
+                # The archive bytes/signature stay unchanged; only its public
+                # filename differs from the Tauri-generated local filename.
+                "url": RELEASE_URL.format(
+                    owner=owner, repo=repo, tag=tag, name=pkg.name.replace(" ", ".")
+                ),
             }
             for key, (pkg, sig) in sorted(found.items())
         },
     }
 
 
+def validate_published_assets(manifest: dict, release: dict) -> None:
+    """Compare URLs against GitHub's actual names before exposing the draft."""
+    if release.get("tag_name") != f"v{manifest['version']}":
+        raise SystemExit("The uploaded release assets belong to a different version")
+    urls = set()
+    for asset in release.get("assets", []):
+        url = asset.get("browser_download_url")
+        # A GitHub draft exposes temporary untagged-* URLs. Only for drafts,
+        # derive the future public URL from GitHub's actual asset filename and
+        # tag. Published releases must already expose the exact final URL.
+        if release.get("draft") is True and isinstance(url, str):
+            temporary = re.fullmatch(
+                r"(https://github\.com/[^/]+/[^/]+/releases/download/)untagged-[a-f0-9]+/(.+)", url
+            )
+            if temporary and unquote(temporary[2]) == asset.get("name"):
+                url = f"{temporary[1]}{release['tag_name']}/{temporary[2]}"
+        urls.add(url)
+    for platform, entry in manifest["platforms"].items():
+        if entry["url"] not in urls or entry["url"] + ".sig" not in urls:
+            raise SystemExit(
+                f"{platform} update URL/signature is absent from uploaded release assets"
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--artifacts", required=True, type=Path, help="收集到的产物目录（递归扫描）")
     ap.add_argument("--tag", required=True, help="Release tag，如 v0.6.1")
-    ap.add_argument("--owner", default="Tavotto")
-    ap.add_argument("--repo", default="tavotto")
+    ap.add_argument("--owner", default=brand.REPO_OWNER)
+    ap.add_argument("--repo", default=brand.REPO_NAME)
     ap.add_argument("--notes", default="", help="更新说明（原样写进清单）")
+    ap.add_argument("--notes-file", type=Path, help="从 UTF-8 文件读取更新说明")
     ap.add_argument("--require", default="", help="必须齐全的平台（逗号分隔），缺一个即失败")
     ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--published-release", type=Path, help="GitHub draft Release API metadata")
     args = ap.parse_args(argv)
 
+    if args.notes_file and args.notes:
+        ap.error("--notes 与 --notes-file 只能选一个")
+    notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else args.notes
     version = args.tag[1:] if args.tag.startswith("v") else args.tag
     require = [k.strip() for k in args.require.split(",") if k.strip()]
     manifest = build_manifest(
-        args.artifacts, version, args.tag, args.owner, args.repo, args.notes, require
+        args.artifacts, version, args.tag, args.owner, args.repo, notes, require
     )
+    if args.published_release:
+        validate_published_assets(manifest, json.loads(args.published_release.read_text("utf-8")))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"✓ {args.out}（{', '.join(manifest['platforms'])}）")

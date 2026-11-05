@@ -9,7 +9,6 @@ import { runDiscreteAction, type DiscreteScope } from '@/store/gestureCoordinato
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useUpdateStore } from '@/store/updateStore'
 import { deleteSelection, inFastEdit, runUndoRedo, runZoomCommand } from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
@@ -72,8 +71,11 @@ const MENU_SCOPE: Record<MenuAction, DiscreteScope> = {
   'menu-diagnostics': 'app',
 }
 
-/** Project Picker 上也认的几条（那里的输入框也要能 ⌘Z） */
-const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set(['menu-open-project', 'menu-undo', 'menu-redo'])
+/** App settings also work before opening an upstream canvas project. */
+const PICKER_ACTIONS: ReadonlySet<MenuAction> = new Set([
+  'menu-open-project', 'menu-undo', 'menu-redo',
+  'menu-settings', 'menu-check-updates', 'menu-diagnostics',
+])
 
 /**
  * 系统菜单（Tauri 壳，`tavotto:menu`）→ 现有 action 的转发。**这里没有第二套行为**：
@@ -149,9 +151,8 @@ function performMenuAction(action: MenuAction) {
       ui.setSettingsOpen(true)
       break
     case 'menu-check-updates':
-      // 与设置页「检查更新」按钮同一个 action；它自己挡并发
+      // 只导航到更新设置；Release 请求必须由设置页里的明确按钮触发。
       ui.setSettingsOpen(true, 'about')
-      void useUpdateStore.getState().checkDesktop()
       break
     case 'menu-diagnostics':
       ui.setSettingsOpen(true, 'diagnostics')

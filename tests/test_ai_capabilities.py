@@ -1,4 +1,4 @@
-"""编码 Agent 的能力探测：模型清单必须来自本机 codex 配置，不是源码里的猜测。
+"""编码 Agent 的模型清单来自本机配置与可选缓存，不在源码里猜测。
 
 背景：写死的模型名会随 OpenAI 换代失效，且失败得很难看——服务端直接回
 400 `The 'gpt-5' model is not supported when using Codex with a ChatGPT
@@ -8,6 +8,7 @@ account.`，用户在面板里只能看到一个不能用的下拉项。
 `tests/test_ai_agents.py`；这里盯的是 capabilities 这层的输出。
 """
 
+import json
 import os
 
 import pytest
@@ -86,6 +87,40 @@ def test_broken_config_does_not_break_the_panel(tmp_path, monkeypatch):
     caps = _codex_caps(tmp_path, monkeypatch, "model = 这不是合法 TOML\n[[[")
     assert caps["installed"] is True
     assert caps["models"] == []  # 退化解析取不到带引号的值
+
+
+def test_codex_picker_includes_visible_cached_models_without_changing_the_default(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "models_cache.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"slug": "detected-model", "visibility": "list"},
+                    {"slug": "configured-model", "visibility": "list"},
+                    {"slug": "hidden-review-model", "visibility": "hide"},
+                    {"slug": "", "visibility": "list"},
+                ]
+            }
+        ),
+        "utf-8",
+    )
+    text = 'model = "configured-model"\n'
+    caps = _codex_caps(tmp_path, monkeypatch, text)
+    assert caps["models"] == ["configured-model", "detected-model"]
+    assert caps["default_model"] == "configured-model"
+    assert (tmp_path / "config.toml").read_text("utf-8") == text
+
+
+def test_codex_model_cache_is_optional_and_works_without_a_config(tmp_path, monkeypatch):
+    (tmp_path / "models_cache.json").write_text(
+        '{"models":[{"slug":"cached-only","visibility":"list"}]}', "utf-8"
+    )
+    caps = _codex_caps(tmp_path, monkeypatch)
+    assert caps["models"] == ["cached-only"]
+    assert caps["default_model"] is None
+    (tmp_path / "models_cache.json").write_text("not-json", "utf-8")
+    assert _codex_caps(tmp_path, monkeypatch)["models"] == []
 
 
 def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):

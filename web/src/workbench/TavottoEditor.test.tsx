@@ -1,0 +1,160 @@
+import { act, useState } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useDocumentStore } from '@/store/documentStore'
+import { useRenderStore } from '@/store/renderStore'
+import type { Manifest } from '@/lib/api'
+import type { PanelObject } from '@/types/document'
+import { TavottoEditor, type TavottoSession } from './TavottoEditor'
+import { performEditorMenuAction } from './menu'
+import type { AssistantRun } from './CodeAssistant'
+import { AssistantHost } from './AssistantHost'
+import { WorkspaceProvider, useWorkspace, type EditorDraft } from './Recovery'
+import type { Plot } from './api'
+
+const assistant = vi.hoisted(() => ({ props: null as null | { onApply: (result: AssistantRun) => Promise<void>; onClose: () => void; patches: unknown[]; onDiscard?: () => void; targetAvailable?: boolean } }))
+vi.mock('@/canvas/CanvasStage', () => ({ CanvasStage: () => <div data-wb-test-canvas /> }))
+vi.mock('@/components/inspector/ElementInspector', () => ({ ElementInspector: () => <div /> }))
+vi.mock('@/hooks/useEngineSync', () => ({ useEngineSync: () => {} }))
+vi.mock('./CodeAssistant', () => ({ CodeAssistant: (props: NonNullable<typeof assistant.props>) => { assistant.props = props; return <div data-wb-test-assistant /> } }))
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+let root: Root
+const session: TavottoSession = { session_id: 'session-one', project: 'local', stem: 'figure', script: 'plot.py', manifest: { stem: 'figure', size_mm: [100, 75], elements: [] } as unknown as Manifest, svg: '<svg/>', overrides: [{ gid: 'title', prop: 'text', value: 'kept' }] }
+const generated: AssistantRun = { id: 'task-one', status: 'done', code: 'new code', changed: true, diff: '-old\n+new' }
+beforeEach(() => {
+  vi.clearAllMocks(); assistant.props = null
+  document.body.innerHTML = ''
+  useRenderStore.getState().clear()
+  const host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => ({ ok: true, json: async () => String(input).endsWith('/apply') ? { ...session, svg: '<svg><g/></svg>', renderRevision: 2 } : { id: 'plot-one' } } as Response)))
+})
+afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllGlobals(); document.body.innerHTML = '' })
+async function render(current = session, onFinish = vi.fn()) {
+  await act(async () => root.render(<TooltipProvider><TavottoEditor session={current} onFinish={onFinish} onCancel={() => {}} /></TooltipProvider>))
+}
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { resolve, promise } }
+
+it('offers Codex after synchronization and stages its candidate before the existing finish transaction', async () => {
+  const onFinish = vi.fn()
+  await render(session, onFinish)
+  const open = document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')
+  expect(open).toBeTruthy()
+  expect(open!.disabled).toBe(false)
+  await act(async () => open!.click())
+  expect(assistant.props?.patches).toEqual(session.overrides)
+  const oldPanelId = useDocumentStore.getState().doc.objects[0].id
+  await act(async () => assistant.props!.onApply(generated))
+  const panel = useDocumentStore.getState().doc.objects[0] as PanelObject
+  expect(panel.id).not.toBe(oldPanelId)
+  expect(panel.overrides).toEqual(session.overrides)
+  const apply = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/assistant/task-one/apply'))
+  expect(JSON.parse(String(apply?.[1]?.body))).toEqual({ patches: session.overrides, require_preview: true })
+  expect(onFinish).not.toHaveBeenCalled()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/finish'))).toBe(false)
+  await act(async () => assistant.props!.onClose())
+  await act(async () => { performEditorMenuAction('menu-save') })
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/sessions/session-one/finish'))).toBe(true)
+  expect(onFinish).toHaveBeenCalledOnce()
+})
+
+it('disables the assistant while current overrides have not been rendered', async () => {
+  await render()
+  await act(async () => {
+    const doc = useDocumentStore.getState().doc
+    useDocumentStore.setState({ doc: { ...doc, objects: doc.objects.map((object) => object.type === 'panel' ? { ...object, overrides: [...object.overrides, { gid: 'title', prop: 'fontsize', value: 15 }] } : object) } })
+  })
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(true)
+})
+
+it('prevents leaving while the latest edits are still awaiting synchronization', async () => {
+  let guard: (() => boolean) | null = null
+  await act(async () => root.render(<TooltipProvider><TavottoEditor session={session} onFinish={() => {}} onCancel={() => {}} onNavigationGuard={(next) => { guard = next }} /></TooltipProvider>))
+  expect(guard).not.toBeNull()
+  expect(guard!()).toBe(true)
+  await act(async () => {
+    const doc = useDocumentStore.getState().doc
+    useDocumentStore.setState({ doc: { ...doc, objects: doc.objects.map((object) => object.type === 'panel' ? { ...object, overrides: [...object.overrides, { gid: 'title', prop: 'fontsize', value: 15 }] } : object) } })
+  })
+  expect(guard!()).toBe(false)
+})
+
+it('restores an unsaved earlier variant over the authoritative resumed render', async () => {
+  const draft = [{ gid: 'title', prop: 'text', value: 'Earlier edit' }]
+  await act(async () => root.render(<TooltipProvider><TavottoEditor session={session} resumePatches={draft} onFinish={() => {}} onCancel={() => {}} /></TooltipProvider>))
+  const panel = useDocumentStore.getState().doc.objects[0] as PanelObject
+  expect(panel.overrides).toEqual(draft)
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(true)
+  expect(useDocumentStore.getState().past.length).toBeGreaterThan(0)
+})
+
+it('rejects an old assistant callback after switching to another session', async () => {
+  await render()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.click())
+  const oldApply = assistant.props!.onApply
+  await render({ ...session, session_id: 'session-two', stem: 'another' })
+  await act(async () => { await expect(oldApply(generated)).rejects.toThrow('图形会话已经变化') })
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/assistant/'))).toBe(false)
+  expect((useDocumentStore.getState().doc.objects[0] as PanelObject).fileId).toBe('another.pdf')
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(false)
+})
+
+it('does not load a delayed applied session into a new figure', async () => {
+  const response = deferred<Response>()
+  vi.mocked(fetch).mockImplementation(() => response.promise)
+  await render()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.click())
+  let application!: Promise<void>
+  await act(async () => { application = assistant.props!.onApply(generated) })
+  await render({ ...session, session_id: 'session-two', stem: 'another' })
+  await act(async () => {
+    response.resolve({ ok: true, json: async () => ({ ...session, svg: '<svg><g/></svg>' }) } as Response)
+    await expect(application).rejects.toThrow('图形会话已经变化')
+  })
+  expect((useDocumentStore.getState().doc.objects[0] as PanelObject).fileId).toBe('another.pdf')
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.disabled).toBe(false)
+})
+
+const owner = { id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', project_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', name: 'Draft plot', revision: 1, code: 'base code' } as Plot
+const restoredCanvas = { id: 'cccccccccccccccccccccccccccccccc', kind: 'canvas', scope: 'global', entity_id: owner.id, project_id: owner.project_id, name: owner.name, base_revision: 1, generation: 1, content: { patches: session.overrides, stem: 'figure', code: owner.code } } as EditorDraft
+function NavigationHarness({ restored = false }: { restored?: boolean }) {
+  const workspace = useWorkspace()
+  const [open, setOpen] = useState(true)
+  const [settled, setSettled] = useState(false)
+  return <><button data-test-leave onClick={() => setOpen(false)}>Leave</button><button data-test-root-change onClick={async () => { await workspace.flushAll(); setSettled(true) }}>{settled ? 'ready' : 'waiting'}</button>{open && <TavottoEditor draftTarget={owner} restoredDraft={restored ? restoredCanvas : undefined} session={session} onReturnAssistant={() => {}} onFinish={() => {}} onCancel={() => {}} />}</>
+}
+async function renderNavigation(restored = false) {
+  await act(async () => root.render(<TooltipProvider><WorkspaceProvider root="/library"><AssistantHost><NavigationHarness restored={restored} /></AssistantHost></WorkspaceProvider></TooltipProvider>))
+}
+function response(value: unknown) { return { ok: true, json: async () => value } as Response }
+it('saves a leaving graphical draft before closing its session and waits before changing roots', async () => {
+  const draft = deferred<Response>(), close = deferred<Response>()
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (init?.method === 'PUT') return draft.promise
+    if (url.endsWith('/cancel')) return close.promise
+    return response(url.endsWith('/drafts') ? { drafts: [], problems: [] } : {})
+  })
+  await renderNavigation(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-test-leave]')!.click())
+  expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
+  await act(async () => { draft.resolve(response({ ...restoredCanvas, generation: 2 })); await Promise.resolve() })
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/sessions/session-one/cancel'))).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-test-root-change]')!.click())
+  expect(document.querySelector('[data-test-root-change]')!.textContent).toBe('waiting')
+  await act(async () => { close.resolve(response({ ok: true })); await Promise.resolve() })
+  expect(document.querySelector('[data-test-root-change]')!.textContent).toBe('ready')
+})
+
+it('keeps a detached assistant session resumable and releases it when that conversation is discarded', async () => {
+  vi.mocked(fetch).mockImplementation(async (input) => response(String(input).endsWith('/drafts') ? { drafts: [], problems: [] } : {}))
+  await renderNavigation()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-tavotto-assistant]')!.click())
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-test-leave]')!.click())
+  expect(assistant.props!.targetAvailable).toBe(false)
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
+  await act(async () => assistant.props!.onDiscard!())
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/sessions/session-one/cancel'))).toBe(true)
+})

@@ -577,6 +577,7 @@ FunctionEnd
   LangString registeringTavotto ${LANG_ENGLISH} "Registering the ${PRODUCTNAME} command line"
   LangString installDirText    ${LANG_ENGLISH} "${PRODUCTNAME} will be installed in the folder below. To use a different folder, click Browse."
   LangString installDirNotWritable ${LANG_ENGLISH} "This folder can't be written to without administrator rights. Choose a folder in your user profile or on another drive."
+  LangString updateInstallNotFound ${LANG_ENGLISH} "The existing ${PRODUCTNAME} installation could not be located. The update was stopped. Please reinstall using the installer."
 !endif
 !ifdef LANG_SIMPCHINESE
   LangString preparingTavotto  ${LANG_SIMPCHINESE} "正在准备 ${PRODUCTNAME}"
@@ -587,6 +588,7 @@ FunctionEnd
   LangString registeringTavotto ${LANG_SIMPCHINESE} "正在登记 ${PRODUCTNAME} 命令行入口"
   LangString installDirText    ${LANG_SIMPCHINESE} "${PRODUCTNAME} 将安装到下面这个文件夹。要换位置，请点「浏览」。"
   LangString installDirNotWritable ${LANG_SIMPCHINESE} "没有管理员权限写不进这个文件夹。请换一个用户目录下或其他磁盘上的位置。"
+  LangString updateInstallNotFound ${LANG_SIMPCHINESE} "找不到已安装的 ${PRODUCTNAME}，更新已停止。请使用安装包重新安装。"
 !endif
 
 Function .onInit
@@ -618,7 +620,44 @@ Function .onInit
   ; 它回答的是「以前装在哪儿」，不是「现在装着没有」。
   ReadRegStr $ExistingInstall SHCTX "${UNINSTKEY}" "UninstallString"
 
-  ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
+  ; Updates must replace the registered installation, even if an installer
+  ; argument supplies a different directory. A missing/stale registration
+  ; must stop the update instead of silently creating a second installation.
+  ${If} $UpdateMode = 1
+    ; The active uninstall record owns the install directory. MANUPRODUCTKEY
+    ; is a historical cache (it can survive an uninstall); consult it only
+    ; for older registrations without InstallLocation.
+    ReadRegStr $4 SHCTX "${UNINSTKEY}" "InstallLocation"
+    ${If} $4 == ""
+      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
+    ${Else}
+      ; Our installers store InstallLocation with surrounding quotes.
+      StrCpy $R6 $4 1
+      StrCpy $R7 $4 1 -1
+      ${If} $R6 == '$\"'
+      ${AndIf} $R7 == '$\"'
+        StrCpy $4 $4 -1 1
+      ${EndIf}
+    ${EndIf}
+    ${If} $ExistingInstall == ""
+    ${OrIf} $4 == ""
+      Goto update_install_not_found
+    ${EndIf}
+    ${If} $ExistingInstall != '$\"$4\uninstall.exe$\"'
+    ${AndIf} $ExistingInstall != '$4\uninstall.exe'
+      Goto update_install_not_found
+    ${EndIf}
+    IfFileExists "$4\${MAINBINARYNAME}.exe" 0 update_install_not_found
+    StrCpy $INSTDIR $4
+    Goto update_install_dir_ready
+    update_install_not_found:
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONEXCLAMATION "$(updateInstallNotFound)"
+      ${EndIf}
+      SetErrorLevel 2
+      Abort
+    update_install_dir_ready:
+  ${ElseIf} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
     !if "${INSTALLMODE}" == "perMachine"
       ${If} ${RunningX64}
@@ -863,8 +902,7 @@ Section Install
   ; 上游只在静默/被动安装时建，GUI 安装靠完成页那个伪 README 复选框——
   ; 而它**默认就是勾上的**，所以「装完桌面上有 Tavotto」一直是既有默认
   ; 行为。完成页不再提供这个选择，就把同一件事收进这里，三种安装方式
-  ; 一致。/NS（不建快捷方式）与 /UPDATE（升级不动用户已有快捷方式）的
-  ; 豁免在 CreateOrUpdateDesktopShortcut 内部，语义一个字没改。
+  ; 一致。/NS 与 /UPDATE 不创建用户已删除的快捷方式；已有快捷方式只刷新图标。
   Call CreateOrUpdateDesktopShortcut
 
   ; TAVOTTO PATCH: 登记安装清单，让外部程序发现得了这台机器上的 CLI ------
@@ -1134,6 +1172,30 @@ Function un.SkipIfPassive
   ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
 FunctionEnd
 
+; TAVOTTO PATCH: a standalone icon avoids the implicit executable-icon fallback.
+; Refresh existing links during /UPDATE as well, keeping arguments, hotkeys and
+; window state. Only touch shortcuts that still point at this installation.
+!macro RefreshWorkbenchShortcutIcon shortcut
+  !insertmacro IsShortcutTarget "${shortcut}" "$INSTDIR\${MAINBINARYNAME}.exe"
+  Pop $0
+  ${If} $0 = 1
+    !insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r0 ""
+    ${If} $0 P<> 0
+      ${IUnknown::QueryInterface} $0 '("${IID_IPersistFile}",.r1)'
+      ${If} $1 P<> 0
+        ${IPersistFile::Load} $1 '("${shortcut}", ${STGM_READWRITE}).r2'
+        ${If} $2 = 0
+          ${IShellLink::SetIconLocation} $0 '(w "$INSTDIR\workbench.ico", 0)'
+          ${IPersistFile::Save} $1 '("${shortcut}",1)'
+          System::Call 'shell32::SHChangeNotify(i 0x00002000, i 0x0005, w "${shortcut}", p 0)'
+        ${EndIf}
+        ${IUnknown::Release} $1 ""
+      ${EndIf}
+      ${IUnknown::Release} $0 ""
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 Function CreateOrUpdateStartMenuShortcut
   ; We used to use product name as MAINBINARYNAME
   ; migrate old shortcuts to target the new MAINBINARYNAME
@@ -1153,6 +1215,9 @@ Function CreateOrUpdateStartMenuShortcut
     StrCpy $R0 1
   ${EndIf}
 
+  !insertmacro RefreshWorkbenchShortcutIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+  !insertmacro RefreshWorkbenchShortcutIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+
   ${If} $R0 = 1
     Return
   ${EndIf}
@@ -1168,10 +1233,10 @@ Function CreateOrUpdateStartMenuShortcut
 
   !if "${STARTMENUFOLDER}" != ""
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
-    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
-    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
 FunctionEnd
@@ -1179,10 +1244,16 @@ FunctionEnd
 Function CreateOrUpdateDesktopShortcut
   ; We used to use product name as MAINBINARYNAME
   ; migrate old shortcuts to target the new MAINBINARYNAME
+  StrCpy $R0 0
   !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    StrCpy $R0 1
+  ${EndIf}
+
+  !insertmacro RefreshWorkbenchShortcutIcon "$DESKTOP\${PRODUCTNAME}.lnk"
+  ${If} $R0 = 1
     Return
   ${EndIf}
 
@@ -1195,6 +1266,6 @@ Function CreateOrUpdateDesktopShortcut
     ${EndIf}
   ${EndIf}
 
-  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\workbench.ico" 0
   !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd

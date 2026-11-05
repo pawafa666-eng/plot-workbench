@@ -27,6 +27,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useUpdateStore } from '@/store/updateStore'
 import { canvasToDoc } from '@/types/document'
 import type { CanvasData, PanelObject } from '@/types/document'
 import { runMenuAction } from './menuActions'
@@ -328,15 +329,17 @@ describe('不带加速键的几条', () => {
     }
   })
 
-  it('项目没开时只认「打开项目」与撤销/重做', () => {
+  it('项目没开时应用设置可用，画布动作不执行', () => {
     useProjectStore.setState({ phase: 'none' })
     for (const a of MENU_ACTIONS) {
       if (a === 'menu-open-project' || a === 'menu-undo' || a === 'menu-redo') continue
       act(() => runMenuAction(a))
     }
-    expect(useUiStore.getState().settingsOpen).toBe(false)
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('diagnostics')
     expect(useUiStore.getState().shortcutHelpOpen).toBe(false)
     expect(observe()).toEqual({ objects: 2, history: 0, zoomBy: [], zoomCentered: [], fit: 0 })
+    useUiStore.getState().setSettingsOpen(false)
 
     const exec = vi.fn(() => true)
     Object.defineProperty(document, 'execCommand', { value: exec, configurable: true })
@@ -355,5 +358,18 @@ describe('不带加速键的几条', () => {
     const left = useUiStore.getState().leftOpen
     act(() => runMenuAction('menu-toggle-left'))
     expect(useUiStore.getState().leftOpen).toBe(!left)
+  })
+
+  it('检查更新菜单只打开设置页，不请求 Releases', () => {
+    const originalCheck = useUpdateStore.getState().checkDesktop
+    const checkDesktop = vi.fn(async () => {})
+    useUpdateStore.setState({ checkDesktop })
+
+    act(() => runMenuAction('menu-check-updates'))
+
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('about')
+    expect(checkDesktop).not.toHaveBeenCalled()
+    useUpdateStore.setState({ checkDesktop: originalCheck })
   })
 })

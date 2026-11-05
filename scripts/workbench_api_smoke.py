@@ -137,11 +137,13 @@ def smoke_workbench(base_url: str, headers: dict[str, str] | None = None) -> Non
             )
             assert (selected["data"]["row_count"], selected["data"]["column_count"]) == (3, 2)
 
+            working_folder = Path(scratch) / "research"
+            working_folder.mkdir()
             project = _json(
                 base_url,
                 "/api/workbench/projects",
                 method="POST",
-                body={"name": "安装器冒烟"},
+                body={"name": "安装器冒烟", "path": str(working_folder)},
                 headers=auth,
             )
             plot = _json(
@@ -178,6 +180,82 @@ def smoke_workbench(base_url: str, headers: dict[str, str] | None = None) -> Non
                     base_url, f"/api/workbench/plots/{plot['id']}/export?format={fmt}", headers=auth
                 )
                 assert code == 200 and len(payload) > 100
+            # Exercise the installed private runtime's ordinary-script route,
+            # not only the backwards-compatible function template above.
+            values = working_folder / "values.csv"
+            values.write_text("x,y\n1,2\n2,4\n", "utf-8")
+            multiple = _json(
+                base_url,
+                f"/api/workbench/projects/{project['id']}/plots",
+                method="POST",
+                body={"name": "多图脚本"},
+                headers=auth,
+            )
+            script = """import pandas as pd
+import matplotlib.pyplot as plt
+table = pd.read_csv("values.csv")
+for index in range(2):
+    fig, ax = plt.subplots(figsize=(2, 2))
+    ax.plot(table.x, table.y + index)
+    ax.set_title(f"Snapshot {int(table.y.iloc[0])}")
+    fig.savefig("must-not-appear.pdf")
+    plt.close(fig)
+"""
+            multi_run = _json(
+                base_url,
+                f"/api/workbench/plots/{multiple['id']}/render",
+                method="POST",
+                body={"code": script, "data": None, "schema": {}},
+                headers=auth,
+            )
+            _settle(base_url, multi_run["job_id"], auth)
+            multi_saved = _json(
+                base_url,
+                f"/api/workbench/plots/{multiple['id']}/save",
+                method="POST",
+                body={"run_id": multi_run["job_id"]},
+                headers=auth,
+            )
+            assert [item["stem"] for item in multi_saved["outputs"]] == ["figure", "figure_2"]
+            values.write_text("x,y\n1,999\n2,1000\n", "utf-8")
+            session = _json(
+                base_url,
+                f"/api/workbench/plots/{multiple['id']}/tavotto/open",
+                method="POST",
+                body={"stem": "figure_2"},
+                headers=auth,
+            )
+            assert "Snapshot 2" in session["svg"]
+            patches = [{"gid": "axes_0.xlabel", "prop": "text", "value": "Edited"}]
+            locked = _json(
+                base_url,
+                f"/api/workbench/sessions/{session['session_id']}/finish",
+                method="POST",
+                body={"patches": patches},
+                headers=auth,
+            )
+            assert locked["state"] == "TAVOTTO_ONLY"
+            assert locked["output_overrides"]["figure_2"] == patches
+            for stem in ("figure", "figure_2"):
+                exported = _json(
+                    base_url,
+                    f"/api/workbench/plots/{multiple['id']}/export-image",
+                    method="POST",
+                    body={"format": "png", "stem": stem},
+                    headers=auth,
+                )
+                # Windows may return RUNNER~1 for TEMP while the service stores
+                # its full path. Compare filesystem identities, not spellings.
+                assert (
+                    Path(exported["path"])
+                    .resolve()
+                    .is_relative_to((working_folder / ".plot-workbench").resolve())
+                )
+                assert Path(exported["path"]).read_bytes().startswith(b"\x89PNG")
+            assert {item.name for item in working_folder.iterdir()} == {
+                "values.csv",
+                ".plot-workbench",
+            }
         finally:
             _json(
                 base_url,

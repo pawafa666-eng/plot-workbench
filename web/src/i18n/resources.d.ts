@@ -164,6 +164,16 @@ export default interface Resources {
       "shape": "形状",
       "text": "文字"
     },
+    "palettePicker": {
+      "apply": "应用配色",
+      "choose": "选择配色方案",
+      "continuous": "连续渐变",
+      "discrete": "分段色块",
+      "empty": "暂无配色方案",
+      "mode": "色图方式",
+      "title": "配色表",
+      "tooFew": "色图至少需要两个颜色"
+    },
     "presetText": {
       "annotation": "标注",
       "group": "分组"

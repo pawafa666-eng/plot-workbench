@@ -24,9 +24,11 @@ import shutil
 import signal
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 from . import ai_agents, ai_history, ai_providers, config, projectenv, scriptlock
@@ -519,7 +521,7 @@ def _cmd(
     model: str | None = None,
     effort: str | None = None,
     endpoint: dict | None = None,
-) -> tuple[list[str], dict[str, str]]:
+) -> ai_agents.SpawnSpec:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。"""
     agent = require_agent(agent_id)
@@ -538,7 +540,7 @@ def _cmd(
             endpoint_env=dict(extra_env),
         )
     )
-    return list(spec.argv), dict(spec.env)
+    return spec
 
 
 def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
@@ -669,37 +671,44 @@ def run(
         prompt = _build_prompt(script, user_prompt, context, figures_dir)
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
-        cmd, extra_env = _cmd(
-            agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint
-        )
-        # 提示词按**值**从日志里摘掉（它在命令行里的位置各家不同：codex 在末尾、
-        # claude 在 `-p` 后面）。按 agent 写死下标那种做法，加第三个 Agent 时
+        spawn = _cmd(agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint)
+        cmd, extra_env = spawn
+        # 仍在 argv 的提示词按**值**从日志里摘掉（claude 在 `-p` 后面；
+        # stdin 提示词本来就不在 argv）。按 agent 写死下标那种做法，加第三个 Agent 时
         # 会静默把用户的提示词整条写进日志。
         LOG.info(
             "AI 任务命令: %s（接口: %s）",
             " ".join("<prompt>" if part == prompt else part for part in cmd),
             endpoint["label"] if endpoint else "CLI 默认",
         )
-        # cmd[0] 是 CLI 可执行（或 node），末尾是提示词——PATH 增强按 cmd[0] 算
+        # cmd[0] 是 CLI 可执行（或 node），PATH 增强按它算。
         env = _spawn_env(cmd[0], extra_env)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=figures_dir,
-            env=env,
-            stdin=subprocess.DEVNULL,  # 桌面 sidecar 的 stdin 是父进程死亡信号管道，不外传
-            stdout=subprocess.PIPE,
-            stderr=stderr_log,  # CLI 的 hook/统计噪音不进对话
-            text=True,
-            bufsize=1,
-            # 显式 UTF-8：Windows 上 text=True 跟随系统区域编码（cp936），
-            # CLI 回来的中文/JSON 一解码就炸，表现为「任务刚起就结束」
-            encoding="utf-8",
-            errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-            # POSIX 上自成一个进程组：取消 / 超时时连它起的子进程一起收掉（`_terminate` / `_await_exit`）；
-            # Windows 的 `taskkill /T` 按 pid 找子树，不需要单独的组
-            start_new_session=os.name != "nt",
-        )
+        with ExitStack() as inputs:
+            stdin = subprocess.DEVNULL
+            stdin_text = getattr(spawn, "stdin_text", None)
+            if stdin_text is not None:
+                # Finite input with EOF; never inherit the sidecar's parent-
+                # death pipe or provide an interactive input channel.
+                payload = inputs.enter_context(
+                    tempfile.TemporaryFile(dir=SNAP_DIR, prefix=".prompt-", suffix=".tmp")
+                )
+                payload.write(stdin_text.encode("utf-8"))
+                payload.seek(0)
+                stdin = payload
+            proc = subprocess.Popen(
+                cmd,
+                cwd=figures_dir,
+                env=env,
+                stdin=stdin,
+                stdout=subprocess.PIPE,
+                stderr=stderr_log,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+                start_new_session=os.name != "nt",
+            )
         sess = {
             "id": sid,
             "agent": agent,

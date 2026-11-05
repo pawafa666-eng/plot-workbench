@@ -1,11 +1,240 @@
 import json
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tavotto.engine import atomicio
 from tavotto.workbench.store import WorkbenchError, WorkbenchStore
+
+
+def test_folder_project_keeps_generated_content_in_one_metadata_child(tmp_path):
+    store = WorkbenchStore(tmp_path / "state")
+    folder = tmp_path / "existing study"
+    folder.mkdir()
+    source = folder / "experiment.py"
+    source.write_bytes(b"# original user script\n")
+    data = folder / "measurements.csv"
+    data.write_bytes(b"x,y\n1,2\n")
+
+    project = store.create_project("研究一", folder)
+    plot = store.create_plot(project["id"], "图一")
+    store.commit_plot(plot["id"], {"code": "saved code", "data": None})
+    store.commit_template(
+        {"scope": "project", "project_id": project["id"], "name": "T", "code": "T", "data": None}
+    )
+
+    metadata = folder / ".plot-workbench"
+    assert set(folder.iterdir()) == {source, data, metadata}
+    assert source.read_bytes() == b"# original user script\n"
+    assert data.read_bytes() == b"x,y\n1,2\n"
+    assert store.project_dir(project["id"]) == metadata
+    assert store.working_directory(project["id"]) == folder
+    assert project["working_directory"] == str(folder)
+    assert store.list_projects()[0]["working_directory"] == str(folder)
+    assert store.get_plot(plot["id"])["working_directory"] == str(folder)
+    assert str(folder) not in (metadata / "project.json").read_text("utf-8")
+
+
+@pytest.mark.parametrize("open_metadata", [False, True])
+def test_folder_project_reopens_after_moving_with_derived_working_directory(
+    tmp_path, open_metadata
+):
+    store = WorkbenchStore(tmp_path / "state")
+    folder = tmp_path / "original"
+    folder.mkdir()
+    (folder / "values.csv").write_text("x,y\n1,2\n", "utf-8")
+    project = store.create_project("P", folder)
+    plot = store.create_plot(project["id"], "F")
+    manifest = (store.project_dir(project["id"]) / "project.json").read_bytes()
+    moved = tmp_path / "moved study"
+    shutil.move(folder, moved)
+
+    reloaded = WorkbenchStore(tmp_path / "other-state")
+    reopened = reloaded.open_project(moved / ".plot-workbench" if open_metadata else moved)
+
+    assert reopened["id"] == project["id"]
+    assert reopened["plots"][0]["id"] == plot["id"]
+    assert reopened["working_directory"] == str(moved)
+    assert reopened["plots"][0]["working_directory"] == str(moved)
+    assert (moved / ".plot-workbench/project.json").read_bytes() == manifest
+
+
+def test_folder_project_recycle_moves_only_metadata_and_preserves_user_folder(tmp_path):
+    store = WorkbenchStore(tmp_path / "state")
+    folder = tmp_path / "study"
+    folder.mkdir()
+    original = folder / "data.csv"
+    original.write_bytes(b"original data")
+    project = store.create_project("P", folder)
+    plot = store.create_plot(project["id"], "F")
+
+    store.delete_project(project["id"])
+
+    assert folder.is_dir()
+    assert set(folder.iterdir()) == {original}
+    assert original.read_bytes() == b"original data"
+    assert store.list_projects() == []
+    item = store.list_trash()[0]
+    store.restore(item["id"])
+    assert set(folder.iterdir()) == {original, folder / ".plot-workbench"}
+    assert original.read_bytes() == b"original data"
+    assert store.get_plot(plot["id"])["working_directory"] == str(folder)
+
+
+def test_external_legacy_project_recycle_keeps_all_original_files_in_place(tmp_path):
+    original_store = WorkbenchStore(tmp_path / "old-state")
+    project = original_store.create_project("Legacy")
+    plot = original_store.create_plot(project["id"], "Old plot")
+    folder = tmp_path / "old project"
+    shutil.move(project["path"], folder)
+    source = folder / "original.py"
+    source.write_bytes(b"original source")
+    before = {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in folder.rglob("*")
+        if path.is_file()
+    }
+    store = WorkbenchStore(tmp_path / "state")
+    reopened = store.open_project(folder)
+    assert reopened["working_directory"] == str(folder)
+    assert store.get_plot(plot["id"])["id"] == plot["id"]
+
+    store.delete_project(project["id"])
+
+    assert folder.is_dir()
+    assert {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in folder.rglob("*")
+        if path.is_file()
+    } == before
+    item = store.list_trash()[0]
+    store.restore(item["id"])
+    assert store.get_project(project["id"])["working_directory"] == str(folder)
+    assert store.list_trash() == []
+
+
+def test_opening_duplicate_project_identity_does_not_replace_registered_folder(tmp_path):
+    store = WorkbenchStore(tmp_path / "state")
+    project = store.create_project("P")
+    copied = tmp_path / "copy"
+    shutil.copytree(project["path"], copied)
+    index = store.index_path.read_bytes()
+
+    with pytest.raises(WorkbenchError) as caught:
+        store.open_project(copied)
+
+    assert caught.value.code == "project_identity_conflict"
+    assert store.index_path.read_bytes() == index
+    assert store.project_dir(project["id"]) == Path(project["path"])
+
+
+def test_opening_colliding_plot_identity_does_not_register_project(tmp_path):
+    store = WorkbenchStore(tmp_path / "state")
+    first = store.create_project("P")
+    plot = store.create_plot(first["id"], "F")
+    copied = tmp_path / "copy"
+    shutil.copytree(first["path"], copied)
+    manifest = json.loads((copied / "project.json").read_text("utf-8"))
+    manifest["id"] = "1" * 32
+    atomicio.write_json(copied / "project.json", manifest)
+    index = store.index_path.read_bytes()
+
+    with pytest.raises(WorkbenchError) as caught:
+        store.open_project(copied)
+
+    assert caught.value.code == "plot_identity_conflict"
+    assert store.index_path.read_bytes() == index
+    assert store.get_plot(plot["id"])["project_id"] == first["id"]
+
+
+@pytest.mark.parametrize("invalid_id", ["../escape", "", None])
+def test_opening_invalid_project_identity_has_no_filesystem_side_effect(tmp_path, invalid_id):
+    store = WorkbenchStore(tmp_path / "state")
+    folder = tmp_path / "invalid"
+    folder.mkdir()
+    atomicio.write_json(
+        folder / "project.json",
+        {"schema_version": 1, "id": invalid_id, "name": "P", "plots": {}},
+    )
+    before = store.index_path.read_bytes()
+    with pytest.raises(WorkbenchError):
+        store.open_project(folder)
+    assert store.index_path.read_bytes() == before
+
+
+def test_folder_create_rejects_existing_metadata_and_missing_folder(tmp_path):
+    store = WorkbenchStore(tmp_path / "state")
+    missing = tmp_path / "missing"
+    with pytest.raises(WorkbenchError):
+        store.create_project("P", missing)
+    assert not missing.exists()
+    folder = tmp_path / "study"
+    folder.mkdir()
+    metadata = folder / ".plot-workbench"
+    metadata.mkdir()
+    sentinel = metadata / "keep.txt"
+    sentinel.write_bytes(b"unrecognized original content")
+    with pytest.raises(WorkbenchError):
+        store.create_project("P", folder)
+    assert sentinel.read_bytes() == b"unrecognized original content"
+    assert set(metadata.iterdir()) == {sentinel}
+
+
+def test_generated_plot_identity_collision_cannot_shadow_another_project(tmp_path, monkeypatch):
+    store = WorkbenchStore(tmp_path / "state")
+    first = store.create_project("First")
+    plot = store.create_plot(first["id"], "Original plot")
+    second = store.create_project("Second")
+    before = (store.project_dir(second["id"]) / "project.json").read_bytes()
+    monkeypatch.setattr(
+        "tavotto.workbench.store.uuid.uuid4", lambda: SimpleNamespace(hex=plot["id"])
+    )
+
+    with pytest.raises(WorkbenchError) as caught:
+        store.create_plot(second["id"], "Colliding plot")
+
+    assert caught.value.code == "plot_identity_conflict"
+    assert (store.project_dir(second["id"]) / "project.json").read_bytes() == before
+    assert not (store.project_dir(second["id"]) / "plots" / plot["id"]).exists()
+    assert store.get_plot(plot["id"])["project_id"] == first["id"]
+
+
+@pytest.mark.parametrize("after_write", [False, True])
+def test_external_legacy_recycle_rolls_back_only_registration_on_write_failure(
+    tmp_path, monkeypatch, after_write
+):
+    original_store = WorkbenchStore(tmp_path / "old-state")
+    project = original_store.create_project("Legacy")
+    folder = tmp_path / "legacy"
+    shutil.move(project["path"], folder)
+    original = folder / "original.csv"
+    original.write_bytes(b"user data")
+    store = WorkbenchStore(tmp_path / "state")
+    store.open_project(folder)
+    index = store.index_path.read_bytes()
+
+    with monkeypatch.context() as fault:
+        _fail_json_write(fault, store.index_path, after_write)
+        with pytest.raises(OSError, match="injected"):
+            store.delete_project(project["id"])
+
+    assert original.read_bytes() == b"user data"
+    assert store.index_path.read_bytes() == index
+    assert store.get_project(project["id"])["working_directory"] == str(folder)
+    assert store.list_trash() == []
+    store.delete_project(project["id"])
+    item = store.list_trash()[0]
+    with monkeypatch.context() as fault:
+        _fail_json_write(fault, store.index_path, after_write)
+        with pytest.raises(OSError, match="injected"):
+            store.restore(item["id"])
+    assert store.list_projects() == []
+    assert store.list_trash()[0]["id"] == item["id"]
+    assert original.read_bytes() == b"user data"
+    store.restore(item["id"])
+    assert store.get_project(project["id"])["working_directory"] == str(folder)
 
 
 def test_project_identity_survives_moving_folder(tmp_path):

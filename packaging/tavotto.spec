@@ -144,7 +144,10 @@ if _MANIFEST.is_file():
         _info = check_runtime_dir(_MANIFEST, require_smoke=_require)
     except BuildError as exc:
         raise SystemExit(f"[tavotto.spec] {exc}")
-    datas.append((str(RUNTIME), "runtime"))
+    # Windows DLLs in this independent Python must not be dependency-scanned
+    # into the Flask parent's root. Append their opaque DATA TOC after Analysis.
+    if sys.platform != "win32":
+        datas.append((str(RUNTIME), "runtime"))
     print(f"[tavotto.spec] 内置 runtime: {RUNTIME} "
           f"（{_info['platform']['os']}/{_info['platform']['arch']}，"
           f"Python {_info['python']['version']}，冒烟 {_info['build']['smoke']}）")
@@ -278,6 +281,11 @@ a = Analysis(
               "pytest", "setuptools", "pip", "pymupdf", "fitz"],
     noarchive=False,
 )
+if sys.platform == "win32" and _MANIFEST.is_file():
+    from freeze_runtime import runtime_data_toc
+
+    a.datas.extend(runtime_data_toc(RUNTIME))
+
 pyz = PYZ(a.pure)
 
 ICON = str(ROOT / "assets" / "workbench" /

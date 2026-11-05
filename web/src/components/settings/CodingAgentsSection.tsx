@@ -51,7 +51,7 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * 小标题的**文字**归审计管、随时可以再改一次——用例认的是这几个属性，
  * 不认那句话（T44 改名时它们就是靠认文案红的）。
  */
-export function CodingAgentsSection() {
+export function CodingAgentsSection({ workbench = false }: { workbench?: boolean }) {
   useTranslation('dialogs')
   const caps = useAiStore((s) => s.caps)
   const preferred = useAiStore((s) => s.agent)
@@ -198,12 +198,12 @@ export function CodingAgentsSection() {
                   首选那个暂时不可用时**按下态落在第一个可用的，但不改用户存着的首选值**
                   （它恢复以后还该是默认项） */}
               <AgentList
-                agents={caps.agents}
+                agents={workbench ? caps.agents.filter((agent) => agent.id === 'codex') : caps.agents}
                 onOpen={openDetail}
                 onToggle={(id, v) => void toggle(id, v)}
                 busyAgent={busyAgent}
                 defaultId={effective}
-                onSetDefault={(id) => useAiStore.getState().setAgent(id)}
+                onSetDefault={workbench ? undefined : (id) => useAiStore.getState().setAgent(id)}
               />
               {effective === null && <p className="type-meta">{ag('noUsableAgent')}</p>}
             </section>
@@ -212,7 +212,7 @@ export function CodingAgentsSection() {
           {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
               一行：名字 + 外链。没有卡片外框、没有说明段（ADR 0038）——
               「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
-          <SettingSection title={ag('useFromAgents')}>
+          {!workbench && <SettingSection title={ag('useFromAgents')}>
             <section data-agent-section="external" className="flex flex-col gap-1.5">
             {/* 这一行走标准设置行（全面打磨 D12）：此前是 28 高的自制行，与同一页上面
                 48 高的 Agent 行、别的设置页的 48 高行各差一档 */}
@@ -235,7 +235,7 @@ export function CodingAgentsSection() {
                 （名字 + 指南）在两种形态下一模一样。 */}
             <CodexIntegrationPanel />
             </section>
-          </SettingSection>
+          </SettingSection>}
         </>
       )}
 

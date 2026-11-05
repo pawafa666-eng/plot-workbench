@@ -78,6 +78,7 @@ from overrides import (
     HATCHES,
     FigState,
     SeriesGroup,
+    WorkbenchPaletteColormap,
     _arrow_style,
     _arrowstyle_name,
     _axis_arrows_on,
@@ -2107,7 +2108,10 @@ def _cmap_facts(cm) -> dict:
     from matplotlib.colors import ListedColormap  # noqa: PLC0415 — worker 侧有科学栈
 
     name = str(getattr(cm, "name", "") or "")
-    discrete = isinstance(cm, ListedColormap) and int(cm.N) <= _DISCRETE_CMAP_MAX
+    discrete = isinstance(cm, ListedColormap) and (
+        int(cm.N) <= _DISCRETE_CMAP_MAX
+        or (isinstance(cm, WorkbenchPaletteColormap) and int(cm.N) <= 1024)
+    )
     if discrete:
         stops = [to_hex(cm(i)) for i in range(int(cm.N))]
     else:

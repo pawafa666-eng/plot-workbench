@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-import pymupdf
+import pikepdf
 import pytest
 
 from tavotto import app as m
@@ -70,8 +70,8 @@ class FakeClock:
 
 
 def _pdf(path):
-    doc = pymupdf.open()
-    doc.new_page(width=100, height=50)
+    doc = pikepdf.Pdf.new()
+    doc.add_blank_page(page_size=(100, 50))
     doc.save(path)
     doc.close()
 

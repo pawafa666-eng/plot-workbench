@@ -84,9 +84,8 @@ export async function bootstrapDesktopSession(): Promise<BootstrapResult> {
 }
 
 /**
- * 系统菜单转发过来的动作 id——与 `src-tauri/src/main.rs` 里 `menu-*` 的
- * MenuItem id **严格同源**（`tests/test_desktop_i18n.py` 两侧比集合）。
- * 帮助菜单的两条链接（`help-*`）由壳自己打开，不在这里。
+ * Inherited canvas commands, retained for the standalone engine UI.
+ * The fork's native menu uses WORKBENCH_MENU_ACTIONS below.
  */
 export const MENU_ACTIONS = [
   'menu-settings',
@@ -135,6 +134,34 @@ export async function onDesktopMenu(
   return listen<string>('tavotto:menu', (e) => {
     if (isMenuAction(e.payload)) handler(e.payload)
   })
+}
+
+/** Actual Plot Workbench native menu contract; paired with menu_spec via golden. */
+export const WORKBENCH_MENU_ACTIONS = [
+  'menu-new-project', 'menu-open-project', 'menu-new-plot', 'menu-new-template',
+  'menu-run', 'menu-save', 'menu-export', 'menu-library-root', 'menu-settings',
+  'menu-undo', 'menu-redo', 'menu-home', 'menu-templates', 'menu-palettes', 'menu-trash',
+  'menu-zoom-in', 'menu-zoom-out', 'menu-zoom-actual', 'menu-zoom-fit',
+  'menu-shortcut-help', 'menu-check-updates', 'menu-diagnostics', 'menu-about',
+] as const
+export type WorkbenchMenuAction = (typeof WORKBENCH_MENU_ACTIONS)[number]
+
+export async function onWorkbenchMenu(handler: (action: WorkbenchMenuAction) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<string>('tavotto:menu', (event) => {
+    if ((WORKBENCH_MENU_ACTIONS as readonly string[]).includes(event.payload)) handler(event.payload as WorkbenchMenuAction)
+  })
+}
+
+/** Only toggles the fixed, declared menu items; no filesystem or engine access. */
+export async function setWorkbenchMenuEnabled(enabled: readonly WorkbenchMenuAction[]): Promise<boolean> {
+  if (!isDesktop()) return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('set_workbench_menu_enabled', { enabled })
+    return true
+  } catch { return false }
 }
 
 /** 桌面交接事件的载荷（与 src-tauri/src/main.rs 的 OpenRequest 严格同源） */

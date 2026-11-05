@@ -15,9 +15,10 @@ interface Workspace {
   refresh: () => Promise<void>; update: (draft: DraftSummary, root: string) => void
   forget: (id: string) => void; register: (flush: () => Promise<void>) => () => void
   flushAll: () => Promise<void>; setPreferences: (value: Partial<WorkspacePreferences>) => void
+  deferCleanup: (id: string, task: () => Promise<void>) => void
 }
 const defaultPreferences: WorkspacePreferences = { density: 'standard', sidebar_collapsed: false, project_view: 'cards' }
-const empty: Workspace = { root: '', drafts: [], problems: [], preferences: defaultPreferences, preferencesReady: true, refresh: async () => {}, update: () => {}, forget: () => {}, register: () => () => {}, flushAll: async () => {}, setPreferences: () => {} }
+const empty: Workspace = { root: '', drafts: [], problems: [], preferences: defaultPreferences, preferencesReady: true, refresh: async () => {}, update: () => {}, forget: () => {}, register: () => () => {}, flushAll: async () => {}, setPreferences: () => {}, deferCleanup: (_id, task) => { void task().catch(() => {}) } }
 const Context = createContext<Workspace>(empty)
 export const useWorkspace = () => useContext(Context)
 
@@ -30,6 +31,7 @@ export function WorkspaceProvider({ root, children }: { root: string; children: 
   const currentRoot = useRef(root); currentRoot.current = root
   const flushers = useRef(new Set<() => Promise<void>>())
   const preferenceQueue = useRef(Promise.resolve())
+  const cleanupTasks = useRef(new Map<string, () => Promise<void>>())
   const refresh = useCallback(async () => {
     if (!root) return
     const result = await api<{ drafts: DraftSummary[]; problems: string[] }>('/drafts')
@@ -46,13 +48,26 @@ export function WorkspaceProvider({ root, children }: { root: string; children: 
   const update = useCallback((draft: DraftSummary, ownerRoot: string) => { if (currentRoot.current === ownerRoot) setDrafts((old) => [draft, ...old.filter((d) => d.id !== draft.id)]) }, [])
   const forget = useCallback((id: string) => setDrafts((old) => old.filter((d) => d.id !== id)), [])
   const register = useCallback((flush: () => Promise<void>) => { flushers.current.add(flush); return () => { flushers.current.delete(flush) } }, [])
-  const flushAll = useCallback(async () => { await Promise.all([...flushers.current].map((flush) => flush())) }, [])
+  const deferCleanup = useCallback((id: string, task: () => Promise<void>) => {
+    let running: Promise<void> | null = null
+    const execute = (): Promise<void> => {
+      if (running) return running
+      running = task().then(() => { cleanupTasks.current.delete(id) }).finally(() => { running = null })
+      return running
+    }
+    cleanupTasks.current.set(id, execute)
+    void execute().catch((e) => setProblems((old) => [...old, `编辑会话关闭失败，切换库前会重试：${errorText(e)}`]))
+  }, [])
+  const flushAll = useCallback(async () => {
+    await Promise.all([...flushers.current].map((flush) => flush()))
+    await Promise.all([...cleanupTasks.current.values()].map((close) => close()))
+  }, [])
   const setPreferences = useCallback((value: Partial<WorkspacePreferences>) => {
     localPreferences.current = { ...localPreferences.current, ...value }
     setPreferenceState((old) => ({ ...old, ...value }))
     preferenceQueue.current = preferenceQueue.current.then(async () => { await patch('/preferences', value) }).catch((e) => setProblems((old) => [...old, `显示设置保存失败：${errorText(e)}`]))
   }, [])
-  return <Context.Provider value={{ root, drafts, problems, preferences, preferencesReady, refresh, update, forget, register, flushAll, setPreferences }}>{children}</Context.Provider>
+  return <Context.Provider value={{ root, drafts, problems, preferences, preferencesReady, refresh, update, forget, register, flushAll, setPreferences, deferCleanup }}>{children}</Context.Provider>
 }
 
 interface DraftOptions {

@@ -22,7 +22,7 @@ import type { Palette } from './paletteModel'
 import { DEFAULT_SCHEMA, type Schema } from './model'
 import { CodeAssistant, type AssistantRun } from './CodeAssistant'
 import { useAssistantBinding, type AssistantSource } from './AssistantHost'
-import { DraftStatus, useEditorDraft, type EditorDraft } from './Recovery'
+import { DraftStatus, useEditorDraft, useWorkspace, type EditorDraft } from './Recovery'
 
 export interface TavottoSession extends EmbeddedFigure { session_id: string; draft_code?: string }
 export function TavottoEditor({ session, resumePatches, data = null, schema = DEFAULT_SCHEMA, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard, draftTarget, restoredDraft }: { draftTarget?: Plot; restoredDraft?: EditorDraft; session: TavottoSession; resumePatches?: PanelOverride[]; data?: Snapshot | null; schema?: Schema; onFinish: (plot: Plot) => void; onCancel: () => void; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
@@ -119,6 +119,20 @@ function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApply
     onApply: async (result) => { await onApplyAssistant(result, panel.overrides, panelId); setAssistantStarted(false) },
   } : null
   const assistant = useAssistantBinding(`figure:${sessionId}`, source)
+  const workspace = useWorkspace()
+  const lease = useRef({ generation: 0, sessionId })
+  useEffect(() => {
+    const generation = ++lease.current.generation
+    lease.current.sessionId = sessionId
+    return () => queueMicrotask(() => {
+      // React's development effect replay keeps this same session mounted.
+      if (generation !== lease.current.generation && lease.current.sessionId === sessionId) return
+      if (!assistant.host?.retainsSession(sessionId)) workspace.deferCleanup(sessionId, async () => {
+        await draft.flush()
+        await post(`/sessions/${sessionId}/cancel`)
+      })
+    })
+  }, [assistant.host, draft.flush, sessionId, workspace.deferCleanup])
   useEffect(() => {
     onNavigationGuard?.(() => {
       const document = useDocumentStore.getState()

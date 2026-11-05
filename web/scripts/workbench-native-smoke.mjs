@@ -115,9 +115,19 @@ try {
   const canvas = await page.locator('[data-canvas-stage]').boundingBox()
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   if (!canvas || canvas.x < 0 || canvas.y < 0 || canvas.x + canvas.width > viewport.width + 1 || canvas.y + canvas.height > viewport.height + 1) throw Error('Canvas viewport is outside the usable window')
-  await page.locator('[data-wb-tavotto-cancel]').click()
-  await page.locator('[data-wb-tavotto]').waitFor({ state: 'detached' })
+  // Leaving through navigation must save the draft and release the old worker;
+  // otherwise the next library switch is permanently blocked as "busy".
   await page.locator('[data-wb-nav-home]').click()
+  await page.locator('[data-wb-tavotto]').waitFor({ state: 'detached' })
+  const originalRoot = await page.evaluate(async () => (await (await fetch('/api/workbench/status')).json()).root)
+  for (const destination of [resolve(directory, 'switched-library'), originalRoot]) {
+    await page.locator('[data-wb-root-path]').click()
+    await page.locator('[data-wb-path-input]').fill(destination)
+    await page.locator('[data-wb-library-inspect]').click()
+    await page.locator('[data-wb-path-confirm]:enabled').waitFor()
+    await page.locator('[data-wb-path-confirm]').click()
+    await page.locator('[data-dialog="workbench-root"]').waitFor({ state: 'detached' })
+  }
   const nativeViewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   // This extra responsive check changes CSS viewport size; scale verification
   // above uses the actual WebView process argument and devicePixelRatio.

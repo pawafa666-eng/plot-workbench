@@ -12,11 +12,12 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const { horizontalOffenders } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 await mkdir(directory, { recursive: true })
 let browser
+let connectError = ''
 for (let attempt = 0; attempt < 60; attempt++) {
   try { browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`); break }
-  catch { await new Promise((r) => setTimeout(r, 500)) }
+  catch (error) { connectError = String(error); await new Promise((r) => setTimeout(r, 500)) }
 }
-if (!browser) throw Error('Installed WebView2 debug endpoint did not become ready')
+if (!browser) throw Error(`Installed WebView2 debug endpoint did not become ready: ${connectError}`)
 let page
 try {
   const deadline = Date.now() + 30000

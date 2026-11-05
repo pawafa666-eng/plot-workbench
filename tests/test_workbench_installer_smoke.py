@@ -56,8 +56,9 @@ def test_close_only_targets_the_desktop_frame_not_visible_runtime_windows(monkey
 
 
 @pytest.mark.parametrize("protected_status", [401, 200])
+@pytest.mark.parametrize("scale", [None, 1.25])
 def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
-    tmp_path, monkeypatch, protected_status
+    tmp_path, monkeypatch, protected_status, scale
 ):
     shell = tmp_path / "PlotWorkbench.exe"
     sidecar = tmp_path / "sidecar/Tavotto/Tavotto.exe"
@@ -65,7 +66,14 @@ def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
     process.poll = lambda: process.returncode
     process.wait = lambda **_: setattr(process, "returncode", 0)
     process.kill = lambda: setattr(process, "returncode", -1)
-    monkeypatch.setattr(smoke.subprocess, "Popen", lambda *a, **kw: process)
+    launches = []
+
+    def launch(argv, **kwargs):
+        launches.append((argv, kwargs))
+        return process
+
+    monkeypatch.setattr(smoke.subprocess, "Popen", launch)
+    monkeypatch.setattr(smoke.shutil, "which", lambda _: str(tmp_path / "node.exe"))
     monkeypatch.setattr(smoke, "ROOT", tmp_path)
     monkeypatch.setattr(smoke, "native_windows", lambda _: [])
     monkeypatch.setattr(smoke.tempfile, "gettempdir", lambda: str(tmp_path))
@@ -111,8 +119,9 @@ def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
         return Response()
 
     monkeypatch.setattr(smoke.urllib.request, "urlopen", response)
+    env = {"TAVOTTO_DATA_DIR": str(tmp_path / "data")}
     if protected_status == 401:
-        smoke.shell_smoke(shell, {})
+        smoke.shell_smoke(shell, env, scale=scale)
         assert closed == [412, 412]
         assert requests == [
             "http://127.0.0.1:54321/",
@@ -120,7 +129,16 @@ def test_shell_smoke_uses_owned_listener_after_handshake_is_consumed(
         ]
     else:
         with pytest.raises(RuntimeError, match="authentication"):
-            smoke.shell_smoke(shell, {})
+            smoke.shell_smoke(shell, env, scale=scale)
+    command, options = launches[0]
+    if scale:
+        assert command[0] == str(shell) and len(command) == 2
+        assert command[1].startswith("--edge-webview-switches=--remote-debugging-port=")
+        assert command[1].endswith("--force-device-scale-factor=1.25")
+        assert "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS" not in options["env"]
+        assert options["env"]["WEBVIEW2_USER_DATA_FOLDER"] == str(tmp_path / "webview-1.25")
+    else:
+        assert command == [str(shell)]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Uses Windows process and TCP owner queries")

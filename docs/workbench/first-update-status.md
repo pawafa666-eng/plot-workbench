@@ -29,3 +29,4 @@
 - 图内页面导航离开时先保存草稿、再关闭后台会话；后续切库等待关闭完成，失败可重试。Codex 对话持有的原图会话保留至返回或丢弃。对应单元测试、移除关闭操作的反证，以及三档缩放下导航离开后切库/切回均通过。
 - 横向溢出只使用 `web/e2e/overflow.ts`。画布世界坐标层允许平移缩放，其零尺寸原点不适用 HTML 布局溢出判据；图内工具栏、属性栏使用该尺，裁切视口另做窗口内包含检查。
 - 本机诊断、隔离项目与截图位于 `D:\download\plot-workbench-first-update`；发行签名、附件和公开通道证明单独保存。用户项目和 `styles/` 未纳入提交。
+- 发行版的三档缩放由测试进程显式传入 `--edge-webview-switches`，每档使用独立 WebView profile；应用正常启动参数保持不变。Wry 设置的 SDK 参数会覆盖环境变量，首次发行验收因此拒绝通过；改用 [WebView2 官方宿主参数](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2environmentoptions) 后，已在本机现有正式桌面版上验证 CDP、125% 实际像素比例和隔离数据目录。

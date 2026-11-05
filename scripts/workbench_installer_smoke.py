@@ -141,17 +141,26 @@ def shell_smoke(shell: Path, env: dict, *, scale: float | None = None) -> None:
     )
     diagnostics.mkdir(parents=True, exist_ok=True)
     child_env = dict(env)
+    command = [str(shell)]
     if scale:
         with socket.socket() as lease:
             lease.bind(("127.0.0.1", 0))
             debug_port = lease.getsockname()[1]
-        child_env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+        browser_flags = (
             f"--remote-debugging-port={debug_port} --remote-debugging-address=127.0.0.1 "
             f"--force-device-scale-factor={scale}"
         )
+        # Wry supplies its own AdditionalBrowserArguments, which supersede the
+        # environment variable on current WebView2. The SDK's host-command-line
+        # switches are processed last. This is an explicit test launch only.
+        command.append(f"--edge-webview-switches={browser_flags}")
+        child_env.pop("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", None)
+        child_env["WEBVIEW2_USER_DATA_FOLDER"] = str(
+            Path(env["TAVOTTO_DATA_DIR"]).parent / f"webview-{scale}"
+        )
     output = (diagnostics / "shell.log").open("wb")
     process = subprocess.Popen(
-        [str(shell)], env=child_env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
+        command, env=child_env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
     )
     side_pid = None
     try:

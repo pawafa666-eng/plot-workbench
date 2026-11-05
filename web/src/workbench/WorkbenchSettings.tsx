@@ -7,10 +7,11 @@ import { DiagnosticsExportButton, PrivacyBlock } from '@/components/settings/Pri
 import { SettingRow, SettingSection } from '@/components/settings/SettingRow'
 import { DesktopUpdateSettings } from '@/components/settings/UpdateSettings'
 import { PRODUCT_NAME, REPO_URL, UPSTREAM_URL } from '@/lib/brand'
-import { revealProjectFolder, isDesktop } from '@/lib/desktop'
+import { isDesktop } from '@/lib/desktop'
 import { useUiStore } from '@/store/uiStore'
 import { cn } from '@/lib/utils'
 import type { Project, Status } from './api'
+import { StorageSettings } from './StoragePanel'
 
 const SECTIONS = [
   ['general', '工作台'], ['ai', 'Codex 助手'], ['diagnostics', '诊断与隐私'], ['about', '关于与更新'],
@@ -26,7 +27,6 @@ export function WorkbenchSettings({ status, project, onChangeRoot, onHelp }: {
   const [section, setSection] = useState<Section>('general')
   const content = useRef<HTMLDivElement>(null)
   const nav = useRef<HTMLElement>(null)
-  const [pathError, setPathError] = useState('')
   useEffect(() => {
     if (open) setSection(SECTIONS.some(([id]) => id === requested) ? requested as Section : 'general')
   }, [open, requested])
@@ -48,11 +48,7 @@ export function WorkbenchSettings({ status, project, onChangeRoot, onHelp }: {
       <div ref={content} data-settings-content className="mb-2 min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 [scrollbar-gutter:stable]">
         <div className="flex max-w-[640px] flex-col gap-7">
           {section === 'general' && <>
-            <SettingSection title="项目与模板库">
-              <SettingRow label="模板库目录" description={status?.root ?? '正在读取…'}><Button variant="secondary" disabled={!status} onClick={() => closeThen(onChangeRoot)} data-wb-settings-root>更换目录…</Button></SettingRow>
-              {project && <SettingRow label="当前项目文件夹" description={project.path}>{isDesktop() && <Button variant="secondary" onClick={async () => { setPathError(await revealProjectFolder(project.path) ? '' : `无法打开文件管理器，请手动打开：${project.path}`) }}>在文件管理器中显示</Button>}</SettingRow>}
-              {pathError && <p role="alert" className="type-caption text-danger">{pathError}</p>}
-            </SettingSection>
+            <StorageSettings projectId={project?.id} onChangeRoot={() => closeThen(onChangeRoot)} />
             <SettingSection title="使用帮助"><SettingRow label="项目、模板、配色与图内编辑"><Button variant="secondary" onClick={() => closeThen(onHelp)}>查看使用说明</Button></SettingRow></SettingSection>
             <p className="type-caption">图、代码与数据保存在各自的项目文件夹；全局模板和配色保存在模板库目录。更换模板库目录后可随时切回。</p>
           </>}

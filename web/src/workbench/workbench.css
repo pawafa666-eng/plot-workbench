@@ -87,3 +87,68 @@
 .wb-share-drop { display:flex; flex-direction:column; align-items:center; gap:12px; padding:32px 16px; border:1px dashed var(--color-border-control); border-radius:8px; background:var(--color-surface); text-align:center; }
 .wb-share-drop.is-dragging { background:var(--color-surface-active); border-color:var(--color-ink); }
 .wb-share-pending { display:inline-block; margin:4px 0; font-size:11px; color:var(--color-ink-3); }
+
+.wb-sidebar-toggle { flex-shrink:0; }
+.wb-app.is-sidebar-collapsed .wb-main-sidebar { display:none; }
+.wb-project-home .wb-page-heading { margin-bottom:16px; }
+.wb-project-home .wb-page-heading h1 { font-size:26px; }
+.wb-home-status { display:flex; flex-wrap:wrap; align-items:center; gap:12px 24px; padding:10px 0 18px; border-bottom:1px solid var(--color-border); }
+.wb-home-status > span { color:var(--color-ink-2); }
+.wb-home-status strong { color:var(--color-ink); font-size:17px; margin-right:4px; }
+.wb-home-status > button { margin-left:auto; }
+.wb-project-list-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:20px 0 14px; }
+.wb-project-list-toolbar > input { flex:1; min-width:180px; max-width:420px; }
+.wb-project-list-toolbar > .wb-toolbar { margin-left:auto; }
+.wb-project-home .wb-project-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr)); gap:16px; }
+.wb-project-home .wb-project-card { padding:0; border:1px solid var(--color-border); border-radius:12px; box-shadow:none; overflow:hidden; min-width:0; }
+.wb-project-card-preview { display:flex; width:100%; height:150px; padding:12px; background:var(--color-surface-2); border-radius:0; }
+.wb-project-card-preview img { display:block; width:100%; height:100%; object-fit:contain; }
+.wb-project-card-preview > span { display:flex; align-items:center; gap:8px; color:var(--color-ink-3); }
+.wb-project-card-content { padding:14px 16px; min-width:0; }
+.wb-project-home .wb-project-card-title { width:100%; padding:0; min-height:28px; justify-content:flex-start; }
+.wb-project-home .wb-project-card-title h3 { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:16px; }
+.wb-project-card-content > p { margin:5px 0; font-size:12px; color:var(--color-ink-2); }
+.wb-project-home .wb-project-card-bottom { margin-top:12px; gap:12px; }
+.wb-project-home .wb-project-card-bottom > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.wb-project-grid.is-list { display:flex; flex-direction:column; }
+.wb-project-grid.is-list .wb-project-card { display:grid; grid-template-columns:112px minmax(0,1fr); align-items:center; }
+.wb-project-grid.is-list .wb-project-card-preview { height:100%; min-height:100px; }
+.wb-project-grid.is-list .wb-project-card-content { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 20px; align-items:center; }
+.wb-project-grid.is-list .wb-project-card-bottom { grid-column:1/-1; margin-top:0; }
+.wb-project-grid.is-list .wb-project-card-content > .wb-muted { grid-column:1/-1; }
+.wb-editor-state-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:8px 0; min-height:34px; font-size:12px; color:var(--color-ink-2); }
+.wb-draft-status { display:inline-flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--color-ink-2); }
+.wb-draft-status.is-error { color:var(--color-danger); }
+.wb-recovery-layout, .wb-history-layout { display:grid; grid-template-columns:200px minmax(0,1fr); gap:20px; min-height:300px; }
+.wb-recovery-list { display:flex; flex-direction:column; gap:6px; max-height:480px; overflow:auto; padding-right:8px; border-right:1px solid var(--color-border); }
+.wb-recovery-list > button { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; text-align:left; min-height:64px; white-space:normal; padding:10px; flex-shrink:0; }
+.wb-recovery-list strong, .wb-recovery-list small { display:block; overflow-wrap:anywhere; }
+.wb-recovery-list small { color:var(--color-ink-3); font-size:11px; font-weight:400; }
+.wb-recovery-detail, .wb-history-detail { min-width:0; }
+.wb-recovery-detail > h3 { margin-top:0; }
+.wb-recovery-detail pre, .wb-history-comparison pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:400px; overflow:auto; padding:12px; background:var(--color-surface-2); border-radius:6px; font-size:12px; line-height:1.7; }
+.wb-history-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.wb-history-comparison > section { min-width:0; padding:10px; border:1px solid var(--color-border); border-radius:8px; }
+.wb-history-comparison h3 { margin:0 0 12px; font-size:13px; }
+.wb-history-comparison img { display:block; width:100%; max-height:360px; object-fit:contain; }
+.wb-storage-mode { display:flex; flex-wrap:wrap; gap:10px; }
+.wb-library-overview { margin-top:14px; padding:14px; border:1px solid var(--color-border); border-radius:8px; }
+.wb-installation-check { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 0; border-top:1px solid var(--color-border); }
+.wb-installation-check > span { flex:1; min-width:180px; font-size:12px; color:var(--color-ink-2); }
+.wb-installation-check.is-error > span { color:var(--color-danger); }
+.wb-app[data-density="compact"] .wb-page-heading { margin-bottom:12px; }
+.wb-app[data-density="compact"] .wb-main-content { padding:18px 22px; }
+.wb-app[data-density="compact"] .wb-project-grid { gap:10px; }
+.wb-app[data-density="compact"] .wb-project-card-content { padding:10px 12px; }
+.wb-app[data-density="compact"] .wb-project-card-preview { height:110px; }
+.wb-app[data-density="compact"] .wb-editor-bar { padding:6px 0; gap:6px; }
+.wb-app[data-density="compact"] .wb-template-card-body { padding:10px; }
+@media (max-width:800px) {
+  .wb-recovery-layout, .wb-history-layout { grid-template-columns:minmax(0,1fr); }
+  .wb-recovery-list { max-height:170px; border-right:0; border-bottom:1px solid var(--color-border); padding:0 0 8px; }
+  .wb-history-comparison { grid-template-columns:minmax(0,1fr); }
+  .wb-project-grid.is-list .wb-project-card { grid-template-columns:80px minmax(0,1fr); }
+  .wb-project-grid.is-list .wb-project-card-content { grid-template-columns:minmax(0,1fr); gap:0; }
+  .wb-project-home .wb-project-card-preview { height:115px; }
+  .wb-app[data-density="compact"] .wb-main-content { padding:14px; }
+}

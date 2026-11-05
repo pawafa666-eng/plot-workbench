@@ -186,7 +186,10 @@ class WorkbenchStore:
         self._seed()
 
     def _index(self):
-        return read_json(self.index_path)
+        # Windows readers must release their non-delete-sharing file handle
+        # before a writer atomically replaces the registration manifest.
+        with self.lock:
+            return read_json(self.index_path)
 
     def project_dir(self, project_id):
         checked_id(project_id)
@@ -203,21 +206,50 @@ class WorkbenchStore:
         return path
 
     def _project(self, project_id):
-        return read_json(self.project_dir(project_id) / "project.json")
+        with self.lock:
+            return read_json(self.project_dir(project_id) / "project.json")
 
     def working_directory(self, project_id):
         path = self.project_dir(project_id)
         record = self._project(project_id)
         return path.parent if record.get("storage_layout") == "folder" else path
 
-    def list_projects(self):
+    def list_projects(self, *, details=False):
+        with self.lock:
+            return self._list_projects(details=details)
+
+    def _list_projects(self, *, details=False):
         result = []
         for pid, entry in self._index()["projects"].items():
             try:
                 record = self._project(pid)
+                summary = {"updated_at": record.get("updated_at", record.get("created_at", ""))}
+                preview_time = ""
+                project_root = self.project_dir(pid)
+                for plot_id, relative in record["plots"].items() if details else ():
+                    try:
+                        plot_root = inside(project_root, relative)
+                        head = read_json(plot_root / "plot.json")
+                        stamp = head.get("updated_at", head.get("created_at", ""))
+                        if head.get("revision") and not head.get("updated_at"):
+                            payload = read_json(
+                                inside(plot_root, f"revisions/{head['revision']}/record.json")
+                            )
+                            stamp = payload.get("updated_at", stamp)
+                        summary["updated_at"] = max(summary["updated_at"], stamp)
+                        if head.get("saved_revision") and not head.get("validation_state"):
+                            preview = inside(plot_root, f"revisions/{head['revision']}/figure.png")
+                            if preview.is_file() and stamp >= preview_time:
+                                summary["preview_url"] = (
+                                    f"/api/workbench/artifact/plot/{plot_id}/{head['revision']}/figure.png"
+                                )
+                                preview_time = stamp
+                    except (WorkbenchError, OSError, ValueError):
+                        continue
                 result.append(
                     {
                         **record,
+                        **summary,
                         "path": entry["path"],
                         "working_directory": str(self.working_directory(pid)),
                         "plot_count": len(record["plots"]),
@@ -337,6 +369,7 @@ class WorkbenchStore:
         with self.lock:
             record = self._project(project_id)
             record["name"] = name_of(name)
+            record["updated_at"] = now()
             atomicio.write_json(self.project_dir(project_id) / "project.json", record)
             index = self._index()
             index["projects"][project_id]["name"] = record["name"]
@@ -381,6 +414,10 @@ class WorkbenchStore:
         raise WorkbenchError("子图不存在", "not_found", 404)
 
     def get_plot(self, plot_id):
+        with self.lock:
+            return self._get_plot(plot_id)
+
+    def _get_plot(self, plot_id):
         path = self.plot_dir(plot_id)
         record = read_json(path / "plot.json")
         if record.get("revision"):
@@ -437,14 +474,24 @@ class WorkbenchStore:
             **copy.deepcopy(payload),
             "revision": revision,
             "saved_revision": revision,
+            "parent_revision": head["revision"] if not old.get("validation_state") else 0,
             "updated_at": now(),
         }
+        payload.pop("validation_state", None)
         if artifacts:
             copy_artifacts(artifacts, target, payload.get("outputs", []))
         atomicio.write_bytes(target / "source.py", payload["code"].encode("utf-8"))
         atomicio.write_json(target / "data.json", payload.get("data"))
         atomicio.write_json(target / "record.json", payload)
-        head.update({"revision": revision, "saved_revision": revision, "state": payload["state"]})
+        head.update(
+            {
+                "revision": revision,
+                "saved_revision": revision,
+                "state": payload["state"],
+                "updated_at": payload["updated_at"],
+            }
+        )
+        head.pop("validation_state", None)
         backups = _document_backups(path / "plot.json")
         try:
             atomicio.write_json(path / "plot.json", head)
@@ -644,6 +691,8 @@ class WorkbenchStore:
                     "description", payload.get("schema", {}).get("description", "")
                 ),
                 "outputs": payload.get("outputs") or [{"stem": "figure", "title": "图 1"}],
+                "parent_revision": meta["revision"],
+                "updated_at": now(),
             }
             atomicio.write_bytes(target / "source.py", record["code"].encode("utf-8"))
             atomicio.write_json(target / "data.json", record["data"])

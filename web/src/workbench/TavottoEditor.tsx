@@ -22,9 +22,10 @@ import type { Palette } from './paletteModel'
 import { DEFAULT_SCHEMA, type Schema } from './model'
 import { CodeAssistant, type AssistantRun } from './CodeAssistant'
 import { useAssistantBinding, type AssistantSource } from './AssistantHost'
+import { DraftStatus, useEditorDraft, type EditorDraft } from './Recovery'
 
-export interface TavottoSession extends EmbeddedFigure { session_id: string }
-export function TavottoEditor({ session, resumePatches, data = null, schema = DEFAULT_SCHEMA, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard }: { session: TavottoSession; resumePatches?: PanelOverride[]; data?: Snapshot | null; schema?: Schema; onFinish: (plot: Plot) => void; onCancel: () => void; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
+export interface TavottoSession extends EmbeddedFigure { session_id: string; draft_code?: string }
+export function TavottoEditor({ session, resumePatches, data = null, schema = DEFAULT_SCHEMA, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard, draftTarget, restoredDraft }: { draftTarget?: Plot; restoredDraft?: EditorDraft; session: TavottoSession; resumePatches?: PanelOverride[]; data?: Snapshot | null; schema?: Schema; onFinish: (plot: Plot) => void; onCancel: () => void; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const [staged, setStaged] = useState({ source: session, current: session })
   const currentSession = staged.source === session ? staged.current : session
   const liveSession = useRef(currentSession)
@@ -82,21 +83,21 @@ export function TavottoEditor({ session, resumePatches, data = null, schema = DE
     } finally { if (alive.current && liveSession.current === source) setBusy(false) }
   }
   if (!panelId) return <div className="wb-loading">正在准备编辑画布…</div>
-  return <PaletteContext.Provider value={{ palettes, error: paletteError }}><EmbeddedCanvas panelId={panelId} sessionId={currentSession.session_id} data={data} schema={schema} busy={busy} error={error} targetLabel={targetLabel} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onApplyAssistant={applyAssistant} onFinish={async () => {
+  return <PaletteContext.Provider value={{ palettes, error: paletteError }}><EmbeddedCanvas draftTarget={draftTarget} restoredDraft={restoredDraft} draftCode={currentSession.draft_code} stem={currentSession.stem ?? 'figure'} baselinePatches={currentSession.overrides} panelId={panelId} sessionId={currentSession.session_id} data={data} schema={schema} busy={busy} error={error} targetLabel={targetLabel} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onApplyAssistant={applyAssistant} onFinish={async () => {
     setBusy(true); setError('')
     try {
       const panel = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId)
       if (!panel) throw new Error('画布对象已关闭')
       const plot = await post<Plot>(`/sessions/${currentSession.session_id}/finish`, { patches: panel.overrides })
-      onFinish(plot)
-    } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+      onFinish(plot); return true
+    } catch (e) { setError(errorText(e)); return false } finally { setBusy(false) }
   }} onCancel={async () => {
     setBusy(true); setError('')
-    try { await post(`/sessions/${currentSession.session_id}/cancel`); onCancel() }
-    catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+    try { await post(`/sessions/${currentSession.session_id}/cancel`); onCancel(); return true }
+    catch (e) { setError(errorText(e)); return false } finally { setBusy(false) }
   }} /></PaletteContext.Provider>
 }
-function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApplyAssistant, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard }: { panelId: string; sessionId: string; data: Snapshot | null; schema: Schema; busy: boolean; error: string; onApplyAssistant: (result: AssistantRun, patches: PanelOverride[], sourcePanelId: string) => Promise<void>; onFinish: () => Promise<void>; onCancel: () => Promise<void>; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
+function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApplyAssistant, onFinish, onCancel, onReturnAssistant, targetLabel, onNavigationGuard, draftTarget, restoredDraft, draftCode, stem, baselinePatches }: { draftTarget?: Plot; restoredDraft?: EditorDraft; draftCode?: string; stem: string; baselinePatches?: PanelOverride[]; panelId: string; sessionId: string; data: Snapshot | null; schema: Schema; busy: boolean; error: string; onApplyAssistant: (result: AssistantRun, patches: PanelOverride[], sourcePanelId: string) => Promise<void>; onFinish: () => Promise<boolean>; onCancel: () => Promise<boolean>; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; targetLabel?: string; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantStarted, setAssistantStarted] = useState(false)
   useEngineSync()
@@ -105,6 +106,14 @@ function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApply
   const canRedo = useDocumentStore((s) => s.future.length > 0)
   const render = usePanelRender(panel ?? null)
   const pending = render?.status === 'rendering' || (panel && JSON.stringify(panel.overrides) !== render?.lastPatches)
+  const patches = panel?.overrides ?? []
+  const baseCode = draftTarget?.base_code ?? draftTarget?.code ?? ''
+  const draft = useEditorDraft({ kind: 'canvas', entity_id: draftTarget?.id, project_id: draftTarget?.project_id, name: draftTarget?.name ?? '图内编辑草稿', base_revision: draftTarget?.revision ?? 0,
+    content: { patches, stem, code: draftCode ?? baseCode }, signature: JSON.stringify(patches) + (draftCode ?? baseCode),
+    dirty: !!restoredDraft || JSON.stringify(patches) !== JSON.stringify(baselinePatches ?? []) || (!!draftCode && draftCode !== baseCode),
+    enabled: !!draftTarget && !busy && !pending, restored: restoredDraft })
+  async function finishWithDraft() { if (await onFinish()) await draft.clear() }
+  async function cancelWithDraft() { if (await onCancel()) await draft.clear() }
   const source: AssistantSource | null = panel ? { data, schema, contextKey: sessionId, sessionId, patches: panel.overrides, targetLabel,
     onPreview: async (result) => { const images = await post<{ before_image: string; after_image: string; figures?: { stem: string; before_image: string; after_image: string }[] }>(`/sessions/${sessionId}/assistant/${result.id}/preview`, { patches: panel.overrides }); return { before: images.before_image, after: images.after_image, figures: images.figures?.map((figure) => ({ stem: figure.stem, before: figure.before_image, after: figure.after_image })) } },
     onApply: async (result) => { await onApplyAssistant(result, panel.overrides, panelId); setAssistantStarted(false) },
@@ -132,9 +141,10 @@ function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApply
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler)
   }, [assistantOpen])
   return <div className="wb-tavotto" data-wb-tavotto>
-    <div className="wb-editor-bar"><div className="wb-toolbar"><strong>图内编辑</strong><IconButton label="撤销" data-wb-undo tip={false} disabled={!canUndo || busy} onClick={() => runUndoRedo(false)}><Undo2 /></IconButton><IconButton label="重做" data-wb-redo tip={false} disabled={!canRedo || busy} onClick={() => runUndoRedo(true)}><Redo2 /></IconButton><span className="wb-muted">{pending ? '正在同步图内修改…' : '画布已同步'}</span></div><div className="wb-toolbar"><Button variant="secondary" disabled={busy || !!pending || render?.status !== 'ready'} onClick={() => { finishActiveGesture(); const current = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId); if (current && exactPanelRender(useRenderStore.getState(), current)?.status === 'ready') { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } } }} data-wb-tavotto-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={busy} onClick={onCancel}>取消本次编辑</Button><Button variant="primary" disabled={busy || !!pending || render?.status === 'error'} loading={busy} loadingLabel="正在验证并写回…" onClick={onFinish} data-wb-tavotto-finish>完成并保存</Button></div></div>
+    <div className="wb-editor-bar" data-wb-tavotto-toolbar><div className="wb-toolbar"><strong>图内编辑</strong><IconButton label="撤销" data-wb-undo tip={false} disabled={!canUndo || busy} onClick={() => runUndoRedo(false)}><Undo2 /></IconButton><IconButton label="重做" data-wb-redo tip={false} disabled={!canRedo || busy} onClick={() => runUndoRedo(true)}><Redo2 /></IconButton><span className="wb-muted">{pending ? '正在同步图内修改…' : '画布已同步'}</span></div><div className="wb-toolbar"><Button variant="secondary" disabled={busy || !!pending || render?.status !== 'ready'} onClick={() => { finishActiveGesture(); const current = useDocumentStore.getState().doc.objects.find((p): p is PanelObject => p.type === 'panel' && p.id === panelId); if (current && exactPanelRender(useRenderStore.getState(), current)?.status === 'ready') { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } } }} data-wb-tavotto-assistant><FileCodeCorner />Codex 助手</Button><Button data-wb-tavotto-cancel disabled={busy} onClick={() => void cancelWithDraft()}>取消本次编辑</Button><Button variant="primary" disabled={busy || !!pending || render?.status === 'error'} loading={busy} loadingLabel="正在验证并写回…" onClick={() => void finishWithDraft()} data-wb-tavotto-finish>完成并保存</Button></div></div>
+    <div className="wb-editor-state-row"><DraftStatus draft={draft} /></div>
     {(error || render?.error) && <div className="wb-error" role="alert">{error || formatMessage(render?.error ?? null)}</div>}
-    <div className={`wb-tavotto-body${busy ? ' wb-locked' : ''}`}><div className="wb-canvas-stage"><CanvasStage /></div>{panel && <aside className="wb-inspector"><ElementInspector panel={panel} /></aside>}</div>
+    <div className={`wb-tavotto-body${busy ? ' wb-locked' : ''}`}><div className="wb-canvas-stage"><CanvasStage /></div>{panel && <aside data-wb-inspector className="wb-inspector"><ElementInspector panel={panel} /></aside>}</div>
     <div className="wb-editor-foot">完成后将保存到 Python 脚本，后续可继续进行图内编辑。取消或验证失败不会锁定代码。</div>
     {!assistant.host && assistantStarted && source && <CodeAssistant {...source} open={assistantOpen} onReopen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} />}
   </div>

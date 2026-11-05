@@ -1,8 +1,11 @@
 import time
+import uuid
 
 import pytest
 
 from tavotto.workbench.examples import EXAMPLES, example_snapshot
+from tavotto.workbench.history import restore_copy
+from tavotto.workbench.recovery import DraftStore
 from tavotto.workbench.rendering import RenderService
 from tavotto.workbench.store import WorkbenchError, WorkbenchStore
 
@@ -76,3 +79,68 @@ def test_tavotto_first_and_repeated_edit_replay_and_lock_the_plot(tmp_path):
             restarted.close()
     finally:
         service.close()
+
+
+def test_durable_canvas_recovery_and_history_copy_use_full_verification(tmp_path, monkeypatch):
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "state"))
+    store = WorkbenchStore(tmp_path / "library")
+    service = RenderService(store, tmp_path / "jobs")
+    project = store.create_project("恢复测试")
+    plot = store.create_plot(project["id"], "恢复图")
+    code = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1,2], [3,4])\n"
+    run = service.render({"code": code, "data": None, "schema": {}}, plot["id"])
+    assert _wait(service, run)["status"] == "success"
+    saved = service.save_plot(plot["id"], run)
+    patches = [{"gid": "axes_0.xlabel", "prop": "text", "value": "Recovered"}]
+    drafts = DraftStore(store.root)
+    draft_id = uuid.uuid4().hex
+    drafts.save(
+        draft_id,
+        {
+            "kind": "canvas",
+            "entity_id": plot["id"],
+            "project_id": project["id"],
+            "name": "恢复图",
+            "base_revision": saved["revision"],
+            "generation": 0,
+            "content": {
+                "patches": patches,
+                "code": code + "ax.set_ylabel('Candidate')\n",
+                "stem": "figure",
+            },
+        },
+    )
+    service.close()
+    restarted = RenderService(store, tmp_path / "restart-jobs")
+    try:
+        restored = DraftStore(store.root).get(draft_id)
+        assert not restarted.jobs and not restarted.sessions
+        assert store.get_plot(plot["id"])["revision"] == saved["revision"]
+        session = restarted.open_session(plot["id"], draft=restored)
+        assert session["overrides"] == patches
+        assert restarted.sessions[session["session_id"]]["code_changed"]
+        committed = restarted.finish_session(session["session_id"], patches)
+        assert committed["revision"] == saved["revision"] + 1
+        assert committed["overrides"] == patches
+        clone = restore_copy(
+            store, "plot", plot["id"], committed["revision"], committed["revision"]
+        )
+        assert clone["validation_state"] == "pending"
+        session = restarted.open_session(clone["id"])
+        assert restarted.sessions[session["session_id"]]["code_changed"]
+        from tavotto import pdfbackend
+
+        head = store.plot_dir(clone["id"]) / "plot.json"
+        before = head.read_bytes()
+        with monkeypatch.context() as scoped:
+            scoped.setattr(pdfbackend, "compare_png", lambda *_: False)
+            with pytest.raises(WorkbenchError, match="未保存"):
+                restarted.finish_session(session["session_id"], patches)
+        assert head.read_bytes() == before
+        assert store.get_plot(clone["id"])["validation_state"] == "pending"
+        verified = restarted.finish_session(session["session_id"], patches)
+        assert "validation_state" not in verified
+        assert verified["saved_revision"] == verified["revision"]
+        assert store.get_plot(plot["id"])["revision"] == committed["revision"]
+    finally:
+        restarted.close()

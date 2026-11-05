@@ -13,15 +13,16 @@ export interface Plot {
   id: string; project_id: string; name: string; state: 'CODE_EDITABLE' | 'TAVOTTO_ONLY'
   code: string; data: Snapshot | null; schema: Schema; source: { kind: string; template_id?: string; original_path?: string }
   revision: number; saved_revision: number; preview_url?: string; outputs?: FigureOutput[]; export_directory?: string; error?: string
+  validation_state?: 'pending'; updated_at?: string; created_at?: string; base_code?: string
 }
-export interface Project { id: string; name: string; path: string; working_directory?: string; plots: Plot[]; plot_count?: number }
+export interface Project { id: string; name: string; path: string; working_directory?: string; plots: Plot[]; plot_count?: number; updated_at?: string; created_at?: string; preview_url?: string; missing?: boolean }
 export interface Template {
   id: string; name: string; scope: 'global' | 'project'; project_id?: string; category_id?: string; favorite: boolean
   code: string; data: Snapshot | null; schema: Schema; preview_url?: string; outputs?: FigureOutput[]; revision: number
   validation_state?: 'pending'
 }
 export interface Category { id: string; name: string; scope: 'global' | 'project'; project_id?: string }
-export interface Status { root: string; version: string; projects: Project[] }
+export interface Status { root: string; version: string; projects: Project[]; library_confirmed?: boolean }
 export interface Job {
   id: string; status: 'running' | 'success' | 'error' | 'cancelled'; error?: string; traceback?: string
   result?: { run_id: string; preview_url: string; outputs?: FigureOutput[]; data?: Snapshot; schema?: Schema }

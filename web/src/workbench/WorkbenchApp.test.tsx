@@ -25,8 +25,12 @@ beforeEach(async () => {
   useUpdateStore.setState({ status: null, desktopPhase: 'idle', desktopChecked: false, desktopError: null })
   vi.clearAllMocks()
   vi.mocked(isDesktop).mockReturnValue(true)
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
+    if (url.includes('/workbench/drafts') && init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body))
+      return { ok: true, json: async () => ({ ...body, id: url.split('/').at(-1), generation: body.generation + 1, updated_at: '2026-11-05T01:00:00Z' }) } as Response
+    }
     const data = url.includes('/workbench/status')
       ? { root: '/workbench-test', version: '1.0.5', projects: [] }
       : url.includes('/workbench/templates')
@@ -106,18 +110,27 @@ it('opens project and template workflows from native menus, with current availab
   expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
 })
 
-it('uses the workbench help and protects an unsaved template when navigating', async () => {
+it('uses the workbench help and waits for a durable draft before navigating', async () => {
   const handler = vi.mocked(onWorkbenchMenu).mock.calls[0][0]
   await act(async () => handler('menu-shortcut-help'))
   expect(document.querySelector('[data-dialog="workbench-help"]')?.textContent).toContain('运行图 / 验证模板')
   await act(async () => document.querySelector<HTMLButtonElement>('[data-dialog="workbench-help"] [data-dialog-close]')!.click())
   await act(async () => handler('menu-new-template'))
   expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-  await act(async () => handler('menu-home'))
-  expect(confirm).toHaveBeenCalledTimes(1)
+  let complete!: () => void
+  const original = vi.mocked(fetch).getMockImplementation()!
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    if (String(input).includes('/drafts/') && init?.method === 'PUT') await new Promise<void>((resolve) => { complete = resolve })
+    return original(input, init)
+  })
+  let navigation!: Promise<void>
+  await act(async () => { navigation = Promise.resolve(handler('menu-home')); await Promise.resolve() })
   expect(document.querySelector('[data-wb-template-editor]')).toBeTruthy()
-  confirm.mockRestore()
+  expect(complete).toBeTypeOf('function')
+  await act(async () => { complete(); await navigation })
+  expect(document.querySelector('[data-wb-template-editor]')).toBeNull()
+  const saved = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).includes('/drafts/') && init?.method === 'PUT')!
+  expect(JSON.parse(String(saved[1]!.body)).content.code).toContain('matplotlib')
 })
 
 it('creates a project in an existing folder with an optional name', async () => {

@@ -105,6 +105,11 @@ def test_api_default_deny_without_session(served):
         "/exports/whatever.pdf",
         "/api/browse?path=/",
         "/api/autosave/doc1",
+        "/api/workbench/storage/locations",
+        "/api/workbench/drafts",
+        "/api/workbench/drafts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/api/workbench/history/plot/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/api/workbench/preferences",
     ):
         status, _, body = http_get(served.url(path))
         assert status == 401, f"{path} 未认证也放行了"
@@ -120,6 +125,10 @@ def test_write_endpoints_default_deny(served):
         "/api/export",
         "/api/workbench/library/export",
         "/api/workbench/library/import",
+        "/api/workbench/storage/inspect",
+        "/api/workbench/drafts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/restore",
+        "/api/workbench/plots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/draft-session",
+        "/api/workbench/history/plot/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/1/restore",
     ):
         status, _, body = http_post_json(served.url(path), {})
         assert status == 401, f"{path} 未认证也放行了"

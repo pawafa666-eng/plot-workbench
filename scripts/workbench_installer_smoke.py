@@ -13,6 +13,8 @@ import json
 import os
 import re
 import secrets
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -133,12 +135,23 @@ def shell_listeners(parent_pid: int, sidecar: Path) -> list[tuple[int, int]]:
     ]
 
 
-def shell_smoke(shell: Path, env: dict) -> None:
-    diagnostics = ROOT / "build/workbench-installer-smoke/shell"
+def shell_smoke(shell: Path, env: dict, *, scale: float | None = None) -> None:
+    diagnostics = (
+        ROOT / "build/workbench-installer-smoke" / (f"shell-{scale}" if scale else "shell")
+    )
     diagnostics.mkdir(parents=True, exist_ok=True)
+    child_env = dict(env)
+    if scale:
+        with socket.socket() as lease:
+            lease.bind(("127.0.0.1", 0))
+            debug_port = lease.getsockname()[1]
+        child_env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+            f"--remote-debugging-port={debug_port} --remote-debugging-address=127.0.0.1 "
+            f"--force-device-scale-factor={scale}"
+        )
     output = (diagnostics / "shell.log").open("wb")
     process = subprocess.Popen(
-        [str(shell)], env=env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
+        [str(shell)], env=child_env, cwd=shell.parent, stdout=output, stderr=subprocess.STDOUT
     )
     side_pid = None
     try:
@@ -169,6 +182,25 @@ def shell_smoke(shell: Path, env: dict) -> None:
             time.sleep(0.25)
         if not side_pid:
             raise RuntimeError("Desktop shell did not start its authenticated sidecar")
+        if scale:
+            # The harness resolves Node before removing developer runtimes from
+            # the application's PATH. The installed app still uses its own runtime.
+            node = shutil.which("node")
+            if not node:
+                raise RuntimeError("Node is required for native WebView layout verification")
+            subprocess.run(
+                [
+                    node,
+                    str(ROOT / "web/scripts/workbench-native-smoke.mjs"),
+                    str(debug_port),
+                    str(scale),
+                    str(diagnostics),
+                ],
+                cwd=ROOT,
+                env=child_env,
+                timeout=300,
+                check=True,
+            )
         deadline = time.monotonic() + 30
         while not close_window(process.pid):
             if time.monotonic() >= deadline:
@@ -440,7 +472,8 @@ def main() -> None:
                 env,
             )
             workbench_smoke(sidecar, env, work / "workbench-api")
-            shell_smoke(shell, env)
+            for scale in (1.0, 1.25, 1.5):
+                shell_smoke(shell, env, scale=scale)
         finally:
             uninstaller = install / "uninstall.exe"
             if uninstaller.is_file():

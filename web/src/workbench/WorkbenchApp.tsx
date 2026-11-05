@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Button, IconButton } from '@/components/ui/Button'
 import { TextInput } from '@/components/ui/Input'
 import { Dialog } from '@/components/ui/Dialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { ArrowUpRight, BookOpen, ChartLine, ChevronRight, Folder, FolderOpen, FolderPlus, LayoutGrid, Pencil, Pipette, Plus, RefreshCw, Settings, Trash2 } from '@/components/ui/icons'
+import { BookOpen, ChartLine, ChevronRight, Folder, FolderOpen, LayoutGrid, Pencil, Pipette, Plus, RefreshCw, Settings, Trash2 } from '@/components/ui/icons'
 import { applyLocale } from '@/i18n'
 import { isDesktop, pickDirectory, type WorkbenchMenuAction } from '@/lib/desktop'
 import { useUiStore } from '@/store/uiStore'
@@ -15,16 +15,25 @@ import { TemplateLibrary } from './TemplateLibrary'
 import { AssistantHost, type AssistantSource } from './AssistantHost'
 import { PaletteLibrary } from './PaletteLibrary'
 import { PaletteEditor } from './PaletteEditor'
+import { WorkspaceProvider, RecoveryDialog, useWorkspace, type EditorDraft } from './Recovery'
+import { LibraryLocationDialog } from './StoragePanel'
+import { ProjectHome } from './ProjectHome'
 import type { Palette } from './paletteModel'
 import type { TavottoSession } from './TavottoEditor'
 import type { PanelOverride } from '@/types/document'
 import './workbench.css'
 import './workbench-theme.css'
 
-type Route = { kind: 'palettes' } | { kind: 'palette'; palette?: Palette } | { kind: 'home' } | { kind: 'project'; id: string } | { kind: 'templates'; scope?: 'global' | 'project' } | { kind: 'plot'; plot: Plot; resume?: TavottoSession; resumePatches?: PanelOverride[] } | { kind: 'template'; template?: Template; scope?: 'global' | 'project'; resume?: TemplateResume } | { kind: 'trash' }
+type Route = { kind: 'palettes' } | { kind: 'palette'; palette?: Palette } | { kind: 'home' } | { kind: 'project'; id: string } | { kind: 'templates'; scope?: 'global' | 'project' } | { kind: 'plot'; plot: Plot; resume?: TavottoSession; resumePatches?: PanelOverride[]; restoredDraft?: EditorDraft } | { kind: 'template'; template?: Template; scope?: 'global' | 'project'; resume?: TemplateResume; restoredDraft?: EditorDraft } | { kind: 'trash' }
 type NameDialog = { title: string; label: string; value: string; confirm: string; run: (value: string) => Promise<void> }
 export function WorkbenchApp() {
   const [status, setStatus] = useState<Status | null>(null)
+  return <WorkspaceProvider root={status?.root ?? ''}><WorkbenchShell status={status} setStatus={setStatus} /></WorkspaceProvider>
+}
+function WorkbenchShell({ status, setStatus }: { status: Status | null; setStatus: Dispatch<SetStateAction<Status | null>> }) {
+  const workspace = useWorkspace()
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const replayNavigation = useRef(false)
   const [route, setRouteState] = useState<Route>({ kind: 'home' })
   const navigationRevision = useRef(0)
   const interactionRevision = useRef(0)
@@ -53,14 +62,18 @@ export function WorkbenchApp() {
   const switchSeq = useRef(0)
   const loaded = useRef(false)
   function openSettings(section = 'general') { setHelpOpen(false); useUiStore.getState().setSettingsOpen(true, section) }
-  function canNavigate() { return canLeaveEditor() && (!dirtyRef.current || window.confirm('当前编辑尚未保存，离开后将丢弃修改。')) }
-  function changeRoot() { if (canNavigate()) setRootDialog(true) }
-  function menuAction(action: WorkbenchMenuAction) {
+  async function canNavigate() {
+    if (!canLeaveEditor()) return false
+    if (route.kind === 'palette' && dirtyRef.current) return window.confirm('配色尚未保存，确定离开并丢弃这些修改？')
+    try { await workspace.flushAll(); return true } catch (e) { setError(`草稿尚未保存，已保留当前编辑：${errorText(e)}`); return false }
+  }
+  async function changeRoot() { if (await canNavigate()) setRootDialog(true) }
+  async function menuAction(action: WorkbenchMenuAction) {
     if (action === 'menu-settings') { openSettings(); return }
     if (action === 'menu-about' || action === 'menu-check-updates') { openSettings('about'); return }
     if (action === 'menu-diagnostics') { openSettings('diagnostics'); return }
     if (action === 'menu-shortcut-help') { useUiStore.getState().setSettingsOpen(false); setHelpOpen(true); return }
-    if (!status || !canNavigate()) return
+    if (!status || !await canNavigate()) return
     switch (action) {
       case 'menu-new-project': createProject(); break
       case 'menu-open-project': setPathDialog(true); break
@@ -91,10 +104,11 @@ export function WorkbenchApp() {
     document.title = WORKBENCH_NAME
     void perform(async () => {
       const [next] = await Promise.all([refreshStatus(), refreshTemplates()])
-      if (localStorage.getItem('workbench.selectedRoot') !== next.root) setRootDialog(true)
+      if (next.library_confirmed === false || (next.library_confirmed === undefined && localStorage.getItem('workbench.selectedRoot') !== next.root)) setRootDialog(true)
     })
   }, [])
   async function openProject(id: string) {
+    if (!await canNavigate()) return
     const seq = ++switchSeq.current
     setError('')
     try {
@@ -113,7 +127,7 @@ export function WorkbenchApp() {
   async function returnToFigure(plot: Plot, source: AssistantSource) {
     if (!source.sessionId) return
     if (!canLeaveEditor()) return
-    if (dirtyRef.current && !window.confirm('当前编辑尚未保存，返回原图将离开当前编辑。确定继续吗？')) return
+    if (!await canNavigate()) return
     const navigation = navigationRevision.current, interaction = interactionRevision.current, wasDirty = dirtyRef.current
     await perform(async () => {
       const [freshPlot, nextProject, library, resume] = await Promise.all([
@@ -129,7 +143,7 @@ export function WorkbenchApp() {
   async function returnToTemplate(template: Template | undefined, scope: 'global' | 'project' | undefined, source: AssistantSource) {
     if (!source.templateDraft || source.code === undefined) return
     if (!canLeaveEditor()) return
-    if (dirtyRef.current && !window.confirm('当前编辑尚未保存，返回模板将离开当前编辑。确定继续吗？')) return
+    if (!await canNavigate()) return
     const navigation = navigationRevision.current, interaction = interactionRevision.current, wasDirty = dirtyRef.current
     await perform(async () => {
       if (template) {
@@ -146,36 +160,61 @@ export function WorkbenchApp() {
       setRoute({ kind: 'template', template, scope, resume: { ...source.templateDraft!, code: source.code!, data: source.data, schema: source.schema } })
     })
   }
+  async function recoverDraft(draft: EditorDraft, entity: Plot | Template | null) {
+    if (!await canNavigate()) throw new Error('当前编辑尚未保存草稿，请处理后重试。')
+    const navigation = navigationRevision.current
+    const unchanged = () => { if (navigation !== navigationRevision.current) throw new Error('页面已切换，请重新选择草稿。') }
+    if (draft.project_id) {
+      const [next, library] = await Promise.all([api<Project>(`/projects/${draft.project_id}`), api<{ templates: Template[]; categories: Category[] }>(`/templates?project_id=${draft.project_id}`)])
+      unchanged()
+      setProject(next); setTemplates(library.templates); setCategories(library.categories)
+    } else {
+      const library = await api<{ templates: Template[]; categories: Category[] }>('/templates')
+      unchanged(); setProject(null); setTemplates(library.templates); setCategories(library.categories)
+    }
+    if (draft.kind === 'template') setRoute({ kind: 'template', template: entity as Template | undefined ?? undefined, scope: draft.scope, restoredDraft: draft })
+    else if (entity) setRoute({ kind: 'plot', plot: entity as Plot, restoredDraft: draft })
+    else throw new Error('所属图形不可用，请先从回收站恢复项目。')
+  }
+  function captureNavigation(event: React.MouseEvent<HTMLElement>) {
+    if (replayNavigation.current) return
+    const target = event.target as HTMLElement
+    const button = target.closest('button')
+    if (!button || target.closest('[data-wb-root-path]')) return
+    if (!canLeaveEditor()) { event.preventDefault(); event.stopPropagation(); return }
+    if (!dirtyRef.current) return
+    event.preventDefault(); event.stopPropagation()
+    const revision = navigationRevision.current
+    void canNavigate().then((ok) => { if (ok && revision === navigationRevision.current && button.isConnected) { replayNavigation.current = true; try { button.click() } finally { replayNavigation.current = false } } })
+  }
   const showProjectNav = !!project && route.kind !== 'home'
   const libraryMode = route.kind === 'templates' || route.kind === 'template'
   const activeProject = route.kind === 'project' || route.kind === 'plot'
   const projectCards = status?.projects ?? []
-  return <TooltipProvider><AssistantHost key={status?.root ?? 'loading'}><div className="wb-app" data-workbench-app onPointerDownCapture={() => { interactionRevision.current++ }} onKeyDownCapture={() => { interactionRevision.current++ }} onInputCapture={() => { interactionRevision.current++ }}>
-    <header className="wb-topbar"><div className="wb-brand"><span className="wb-brand-symbol" aria-hidden><i /><i /><i /></span><span>{WORKBENCH_NAME}</span></div><div className="wb-topbar-breadcrumb"><span>项目</span>{showProjectNav && <><ChevronRight /><span>{project?.name}</span></>}{libraryMode && <><ChevronRight /><span>模板库</span></>}</div><div className="wb-topbar-right"><span className="wb-local-dot" />本地运行<IconButton label="设置" tip={false} data-wb-settings onClick={() => openSettings()}><Settings /></IconButton><IconButton label="更换模板库目录" tip={false} onClick={changeRoot}><FolderOpen /></IconButton></div></header>
-    <div className="wb-app-body"><aside className="wb-main-sidebar" onClickCapture={(event) => { if (!(event.target as HTMLElement).closest('[data-wb-root-path]') && (event.target as HTMLElement).closest('button') && (!canLeaveEditor() || (draftDirty && !window.confirm('当前编辑尚未保存，离开后将丢弃修改。')))) { event.preventDefault(); event.stopPropagation() } }}><div className="wb-nav-group"><Button active={route.kind === 'home'} onClick={() => setRoute({ kind: 'home' })} data-wb-nav-home><LayoutGrid />项目首页</Button><Button active={libraryMode} onClick={() => { void perform(async () => { await refreshTemplates(); setRoute({ kind: 'templates' }) }) }} data-wb-nav-templates><BookOpen />模板库</Button><Button active={route.kind === 'palettes' || route.kind === 'palette'} onClick={() => setRoute({ kind: 'palettes' })} data-wb-nav-palettes><Pipette />配色表</Button></div><div className="wb-sidebar-label"><span>我的项目</span><IconButton label="新建项目" tip={false} onClick={createProject}><Plus /></IconButton></div><nav className="wb-project-nav">{projectCards.map((item) => <Button key={item.id} active={activeProject && project?.id === item.id} onClick={() => openProject(item.id)} data-wb-project-nav={item.id}><Folder /><span>{item.name}</span></Button>)}</nav><div className="wb-sidebar-bottom"><Button active={route.kind === 'trash'} onClick={showTrash}><Trash2 />回收站</Button><button className="wb-root-path" onClick={changeRoot} title={status?.root} data-wb-root-path><FolderOpen /><span>{status?.root ?? '选择模板库目录'}</span></button></div></aside>
+  return <TooltipProvider><AssistantHost key={status?.root ?? 'loading'}><div className={`wb-app ${workspace.preferences.sidebar_collapsed ? 'is-sidebar-collapsed' : ''}`} data-density={workspace.preferences.density} data-workbench-preferences-ready={workspace.preferencesReady || undefined} data-workbench-app onPointerDownCapture={() => { interactionRevision.current++ }} onKeyDownCapture={() => { interactionRevision.current++ }} onInputCapture={() => { interactionRevision.current++ }}>
+    <header className="wb-topbar"><Button className="wb-sidebar-toggle" data-wb-sidebar-toggle aria-label={workspace.preferences.sidebar_collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => workspace.setPreferences({ sidebar_collapsed: !workspace.preferences.sidebar_collapsed })}>{workspace.preferences.sidebar_collapsed ? '展开' : '收起'}</Button><div className="wb-brand"><span className="wb-brand-symbol" aria-hidden><i /><i /><i /></span><span>{WORKBENCH_NAME}</span></div><div className="wb-topbar-breadcrumb"><span>项目</span>{showProjectNav && <><ChevronRight /><span>{project?.name}</span></>}{libraryMode && <><ChevronRight /><span>模板库</span></>}</div><div className="wb-topbar-right"><span className="wb-local-dot" />本地运行<IconButton label="设置" tip={false} data-wb-settings onClick={() => openSettings()}><Settings /></IconButton><IconButton label="更换模板库目录" tip={false} onClick={changeRoot}><FolderOpen /></IconButton></div></header>
+    <div className="wb-app-body"><aside className="wb-main-sidebar" onClickCapture={captureNavigation}><div className="wb-nav-group"><Button active={route.kind === 'home'} onClick={() => setRoute({ kind: 'home' })} data-wb-nav-home><LayoutGrid />项目首页</Button><Button active={libraryMode} onClick={() => { void perform(async () => { await refreshTemplates(); setRoute({ kind: 'templates' }) }) }} data-wb-nav-templates><BookOpen />模板库</Button><Button active={route.kind === 'palettes' || route.kind === 'palette'} onClick={() => setRoute({ kind: 'palettes' })} data-wb-nav-palettes><Pipette />配色表</Button></div><div className="wb-sidebar-label"><span>我的项目</span><IconButton label="新建项目" tip={false} onClick={createProject}><Plus /></IconButton></div><nav className="wb-project-nav">{projectCards.map((item) => <Button key={item.id} active={activeProject && project?.id === item.id} onClick={() => openProject(item.id)} data-wb-project-nav={item.id}><Folder /><span>{item.name}</span></Button>)}</nav><div className="wb-sidebar-bottom"><Button active={route.kind === 'trash'} onClick={showTrash}><Trash2 />回收站</Button><button className="wb-root-path" onClick={changeRoot} title={status?.root} data-wb-root-path><FolderOpen /><span>{status?.root ?? '选择模板库目录'}</span></button></div></aside>
       <main className={`wb-main-content ${route.kind === 'plot' || route.kind === 'template' ? 'is-editor' : ''}`}>
         {error && <div className="wb-global-error" data-wb-global-error role="alert"><span>{error}</span><Button onClick={() => setError('')}>关闭</Button></div>}
         {!status && <div className="wb-loading"><RefreshCw /><p>正在读取项目列表…</p>{error && <Button variant="secondary" onClick={() => perform(async () => { await refreshStatus(); await refreshTemplates() })}>重试连接</Button>}</div>}
-        {status && route.kind === 'home' && <><div className="wb-page-heading"><div><h1>项目</h1><p>选择文件夹创建项目，或打开项目文件夹。</p></div><div className="wb-toolbar"><Button variant="secondary" onClick={() => setPathDialog(true)}><FolderOpen />打开项目文件夹</Button><Button variant="primary" onClick={createProject} data-wb-project-create><Plus />新建项目</Button></div></div><div className="wb-home-summary"><div><span className="wb-summary-number">{String(projectCards.length).padStart(2, '0')}</span><span>绘图项目</span></div><div><span className="wb-summary-number">{String(templates.filter((t) => t.scope === 'global').length).padStart(2, '0')}</span><span>全局模板</span></div></div><div className="wb-section-heading wb-project-list-heading"><h2>项目</h2><span className="wb-muted">保存在各项目文件夹</span></div><div className="wb-project-grid">{projectCards.map((item, i) => <article className="wb-project-card" key={item.id} data-wb-project-card={item.id}><div className="wb-project-card-top"><span className="wb-project-number">{String(i + 1).padStart(2, '0')}</span><Folder /></div><Button className="wb-project-card-title" onClick={() => openProject(item.id)}><h3>{item.name}</h3><ArrowUpRight /></Button><p>{item.plot_count ?? (Array.isArray(item.plots) ? item.plots.length : 0)} 张图 · 本地项目</p><div className="wb-project-card-bottom"><span title={item.path}>{item.path}</span><Button onClick={() => openProject(item.id)}>打开<ChevronRight /></Button></div></article>)}<Button className="wb-new-project-card" onClick={createProject}><FolderPlus /><strong>新建绘图项目</strong><span>选择已有文件夹</span></Button></div></>}
-        {status && route.kind === 'project' && project && <><div className="wb-page-heading"><div><h1>{project.name}<IconButton label="重命名项目" tip={false} onClick={() => setNameDialog({ title: '重命名项目', label: '项目名称', value: project.name, confirm: '保存名称', run: async (name) => { await patch(`/projects/${project.id}`, { name }); await refreshProject(); await refreshStatus() } })}><Pencil /></IconButton></h1><p className="wb-mono-path">{project.path}</p></div><div className="wb-toolbar"><Button variant="secondary" onClick={() => setRoute({ kind: 'templates', scope: 'project' })}><BookOpen />项目模板</Button><Button variant="primary" onClick={createPlot} data-wb-plot-create><Plus />新建图</Button></div></div><div className="wb-project-overview"><span><strong>{project.plots?.length ?? 0}</strong> 张图</span><span>项目中的图与模板独立保存</span><Button variant="danger" onClick={() => setConfirmDelete({ title: '将项目移入回收站？', text: `「${project.name}」及其中的图将移入回收站，可稍后恢复。`, run: async () => { await remove(`/projects/${project.id}`); setProject(null); setRoute({ kind: 'home' }); await refreshStatus(); await refreshTemplates(null) } })}><Trash2 />删除项目</Button></div><div className="wb-plot-grid">{(project.plots ?? []).map((plot) => <article className="wb-plot-card" key={plot.id} data-wb-plot-card={plot.id}><Button className="wb-plot-thumb" onClick={() => perform(async () => setRoute({ kind: 'plot', plot: await api<Plot>(`/plots/${plot.id}`) }))}>{plot.preview_url ? <img src={plot.preview_url} alt={plot.name} /> : <div className="wb-card-empty"><ChartLine /><span>等待首次运行</span></div>}</Button><div className="wb-plot-card-info"><h3>{plot.name}</h3><span className="wb-plot-state">{plot.state === 'TAVOTTO_ONLY' ? '图内编辑' : '代码可编辑'}</span><div className="wb-card-footer"><Button variant="secondary" onClick={() => perform(async () => setRoute({ kind: 'plot', plot: await api<Plot>(`/plots/${plot.id}`) }))}>打开图<ChevronRight /></Button><div className="wb-toolbar"><IconButton label={`重命名 ${plot.name}`} tip={false} onClick={() => setNameDialog({ title: '重命名图', label: '图名称', value: plot.name, confirm: '保存名称', run: async (name) => { await patch(`/plots/${plot.id}`, { name }); await refreshProject() } })}><Pencil /></IconButton><IconButton label={`删除 ${plot.name}`} tip={false} onClick={() => setConfirmDelete({ title: '将图移入回收站？', text: `「${plot.name}」可以从回收站恢复。`, run: async () => { await remove(`/plots/${plot.id}`); await refreshProject() } })}><Trash2 /></IconButton></div></div></div></article>)}<Button className="wb-new-project-card wb-new-plot-card" onClick={createPlot}><Plus /><strong>新建图</strong><span>从模板或 Python 代码开始</span></Button></div></>}
+        {status && route.kind === 'home' && <ProjectHome projects={projectCards} templateCount={templates.filter((t) => t.scope === 'global').length} onOpen={(id) => { void openProject(id) }} onCreate={createProject} onOpenFolder={() => setPathDialog(true)} onRecovery={() => setRecoveryOpen(true)} />}
+        {status && route.kind === 'project' && project && <><div className="wb-page-heading"><div><h1>{project.name}<IconButton label="重命名项目" tip={false} onClick={() => setNameDialog({ title: '重命名项目', label: '项目名称', value: project.name, confirm: '保存名称', run: async (name) => { await patch(`/projects/${project.id}`, { name }); await refreshProject(); await refreshStatus() } })}><Pencil /></IconButton></h1><p className="wb-mono-path">{project.path}</p></div><div className="wb-toolbar"><Button variant="secondary" onClick={() => setRoute({ kind: 'templates', scope: 'project' })}><BookOpen />项目模板</Button><Button variant="primary" onClick={createPlot} data-wb-plot-create><Plus />新建图</Button></div></div><div className="wb-project-overview"><span><strong>{project.plots?.length ?? 0}</strong> 张图</span><span>项目中的图与模板独立保存</span><Button variant="danger" onClick={() => setConfirmDelete({ title: '将项目移入回收站？', text: `「${project.name}」及其中的图将移入回收站，可稍后恢复。`, run: async () => { await remove(`/projects/${project.id}`); setProject(null); setRoute({ kind: 'home' }); await refreshStatus(); await refreshTemplates(null) } })}><Trash2 />删除项目</Button></div><div className="wb-plot-grid">{(project.plots ?? []).map((plot) => <article className="wb-plot-card" key={plot.id} data-wb-plot-card={plot.id}><Button data-wb-plot-open className="wb-plot-thumb" onClick={() => perform(async () => setRoute({ kind: 'plot', plot: await api<Plot>(`/plots/${plot.id}`) }))}>{plot.preview_url ? <img src={plot.preview_url} alt={plot.name} /> : <div className="wb-card-empty"><ChartLine /><span>等待首次运行</span></div>}</Button><div className="wb-plot-card-info"><h3>{plot.name}</h3><span className="wb-plot-state">{plot.state === 'TAVOTTO_ONLY' ? '图内编辑' : '代码可编辑'}</span><div className="wb-card-footer"><Button variant="secondary" onClick={() => perform(async () => setRoute({ kind: 'plot', plot: await api<Plot>(`/plots/${plot.id}`) }))}>打开图<ChevronRight /></Button><div className="wb-toolbar"><IconButton label={`重命名 ${plot.name}`} tip={false} onClick={() => setNameDialog({ title: '重命名图', label: '图名称', value: plot.name, confirm: '保存名称', run: async (name) => { await patch(`/plots/${plot.id}`, { name }); await refreshProject() } })}><Pencil /></IconButton><IconButton label={`删除 ${plot.name}`} tip={false} onClick={() => setConfirmDelete({ title: '将图移入回收站？', text: `「${plot.name}」可以从回收站恢复。`, run: async () => { await remove(`/plots/${plot.id}`); await refreshProject() } })}><Trash2 /></IconButton></div></div></div></article>)}<Button className="wb-new-project-card wb-new-plot-card" onClick={createPlot}><Plus /><strong>新建图</strong><span>从模板或 Python 代码开始</span></Button></div></>}
         {status && route.kind === 'palettes' && <PaletteLibrary projectId={project?.id} onImported={() => refreshTemplates()} onEdit={(palette) => setRoute({ kind: 'palette', palette })} />}
         {status && route.kind === 'palette' && <PaletteEditor key={route.palette?.id ?? 'new'} initial={route.palette} onDirtyChange={setDraftDirty} onBack={() => setRoute({ kind: 'palettes' })} onSaved={() => setRoute({ kind: 'palettes' })} />}
         {status && route.kind === 'templates' && <TemplateLibrary key={route.scope ?? 'global'} defaultScope={route.scope} templates={templates} categories={categories} projectId={project?.id} projectName={project?.name} onRefresh={() => refreshTemplates()} onEdit={(template, scope) => setRoute({ kind: 'template', template, scope })} />}
-        {status && route.kind === 'template' && <TemplateEditor onDirtyChange={setDraftDirty} key={`${route.template?.id || 'new'}:${route.resume ? 'resumed' : 'new'}`} initial={route.template} resume={route.resume} onReturnAssistant={(source) => returnToTemplate(route.template, route.scope, source)} defaultScope={route.scope} projectId={project?.id} categories={categories} onBack={() => setRoute({ kind: 'templates', scope: route.scope ?? route.template?.scope })} onSaved={() => { void perform(async () => { await refreshTemplates(); setRoute({ kind: 'templates' }) }) }} />}
-        {status && route.kind === 'plot' && <PlotEditor onDirtyChange={setDraftDirty} onNavigationGuard={setNavigationGuard} key={`${route.plot.id}:${route.resume?.session_id ?? 'new'}`} initial={route.plot} resumeSession={route.resume} resumePatches={route.resumePatches} onReturnAssistant={(source) => returnToFigure(route.plot, source)} templates={templates} onBack={() => { if (project) void openProject(project.id); else setRoute({ kind: 'home' }) }} onChanged={() => { void refreshProject(); void refreshStatus() }} />}
+        {status && route.kind === 'template' && <TemplateEditor restoredDraft={route.restoredDraft} onRestoreCopy={(value) => { setRoute({ kind: 'template', template: value as Template }); void refreshTemplates() }} onDirtyChange={setDraftDirty} key={`${route.template?.id || 'new'}:${route.resume ? 'resumed' : 'new'}`} initial={route.template} resume={route.resume} onReturnAssistant={(source) => returnToTemplate(route.template, route.scope, source)} defaultScope={route.scope} projectId={project?.id} categories={categories} onBack={() => setRoute({ kind: 'templates', scope: route.scope ?? route.template?.scope })} onSaved={() => { void perform(async () => { await refreshTemplates(); setRoute({ kind: 'templates' }) }) }} />}
+        {status && route.kind === 'plot' && <PlotEditor restoredDraft={route.restoredDraft} onRestoreCopy={(value) => { setRoute({ kind: 'plot', plot: value as Plot }); void refreshProject(); void refreshStatus() }} onDirtyChange={setDraftDirty} onNavigationGuard={setNavigationGuard} key={`${route.plot.id}:${route.resume?.session_id ?? 'new'}`} initial={route.plot} resumeSession={route.resume} resumePatches={route.resumePatches} onReturnAssistant={(source) => returnToFigure(route.plot, source)} templates={templates} onBack={() => { if (project) void openProject(project.id); else setRoute({ kind: 'home' }) }} onChanged={() => { void refreshProject(); void refreshStatus() }} />}
         {status && route.kind === 'trash' && <><div className="wb-page-heading"><div><h1>回收站</h1><p>恢复已删除的项目、图和模板。</p></div><Button variant="secondary" onClick={showTrash}><RefreshCw />刷新</Button></div><div className="wb-trash-list">{trash.map((item) => <div key={item.id}><Trash2 /><strong>{item.name ?? item.id}</strong><span className="wb-muted">{item.kind === 'project' ? '项目' : item.kind === 'plot' ? '图' : '模板'}</span><span className="wb-muted">{item.deleted_at ?? ''}</span><Button variant="secondary" onClick={() => perform(async () => { await post(`/trash/${item.id}/restore`); await refreshStatus(); await refreshTemplates(); await showTrash() })}>恢复</Button></div>)}</div>{trash.length === 0 && <div className="wb-empty-state"><Trash2 /><h2>回收站是空的</h2><p>已删除的内容可在此恢复。</p></div>}</>}
       </main></div>
-    {rootDialog && <RootDialog current={status?.root ?? ''} onClose={() => setRootDialog(false)} onSave={async (path) => { await perform(async () => { const next = await post<Status>('/root', { path }); localStorage.setItem('workbench.selectedRoot', next.root); setStatus(next); setProject(null); setRoute({ kind: 'home' }); await refreshTemplates(null); setRootDialog(false) }) }} />}
+    {rootDialog && <LibraryLocationDialog current={status?.root ?? ''} onClose={() => setRootDialog(false)} onSave={async (path, mode) => { await workspace.flushAll(); const next = await post<Status>('/root', { path, mode, source: status?.root }); localStorage.setItem('workbench.selectedRoot', next.root); setStatus(next); setProject(null); setRoute({ kind: 'home' }); await refreshTemplates(null); setRootDialog(false) }} />}
     {projectDialog && <ProjectDialog onClose={() => setProjectDialog(false)} onSave={async (path, name) => { await perform(async () => { const next = await post<Project>('/projects', { path, name }); await refreshStatus(); await openProject(next.id); setProjectDialog(false) }) }} />}
     {pathDialog && <PathDialog title="打开项目文件夹" description="选择已有项目所在的文件夹。" onClose={() => setPathDialog(false)} onSave={async (path) => { await perform(async () => { const next = await post<Project>('/projects/open', { path }); await refreshStatus(); await openProject(next.id); setPathDialog(false) }) }} />}
     {nameDialog && <Dialog open title={nameDialog.title} onOpenChange={(v) => { if (!v) setNameDialog(null) }} footer={<Button variant="primary" disabled={!nameDialog.value.trim()} onClick={() => perform(async () => { await nameDialog.run(nameDialog.value); setNameDialog(null) })} data-wb-name-confirm>{nameDialog.confirm}</Button>}><label className="wb-field">{nameDialog.label}<TextInput autoFocus value={nameDialog.value} onChange={(e) => setNameDialog({ ...nameDialog, value: e.target.value })} data-wb-name-input /></label></Dialog>}
     {confirmDelete && <Dialog open title={confirmDelete.title} description={confirmDelete.text} onOpenChange={(v) => { if (!v) setConfirmDelete(null) }} footer={<><Button onClick={() => setConfirmDelete(null)}>取消</Button><Button variant="danger" onClick={() => perform(async () => { await confirmDelete.run(); setConfirmDelete(null) })}>移入回收站</Button></>}>{null}</Dialog>}
     <WorkbenchSettings status={status} project={project} onChangeRoot={changeRoot} onHelp={() => setHelpOpen(true)} />
+    {recoveryOpen && <RecoveryDialog onClose={() => setRecoveryOpen(false)} onRecover={recoverDraft} />}
     {helpOpen && <WorkbenchHelp onClose={() => setHelpOpen(false)} />}
   </div></AssistantHost></TooltipProvider>
-}
-function RootDialog({ current, onClose, onSave }: { current: string; onClose: () => void; onSave: (path: string) => Promise<void> }) {
-  return <PathDialog title="选择模板库目录" description="全局模板与回收站保存在此目录；项目使用各自的文件夹。" current={current} onClose={onClose} onSave={onSave} root />
 }
 function ProjectDialog({ onClose, onSave }: { onClose: () => void; onSave: (path: string, name: string) => Promise<void> }) {
   const [path, setPath] = useState('')

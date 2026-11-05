@@ -156,8 +156,11 @@ class RenderService:
         payload = copy.deepcopy({**payload, "schema": schema})
         job_id = uuid.uuid4().hex
         working_directory = None
+        snapshot = None
         if plot_id:
             plot = self.store.get_plot(plot_id)
+            if plot.get("validation_state") == "pending" and plot.get("history_origin"):
+                snapshot = plot
             working_directory = str(self.store.working_directory(plot["project_id"]))
             directory = inside(self.store.project_dir(plot["project_id"]), f"cache/runs/{job_id}")
         else:
@@ -174,6 +177,16 @@ class RenderService:
                 "data_helper": str(directory / "data_helper.py"),
                 "working_directory": working_directory or str(directory),
                 "original_path": payload.get("original_path"),
+                **(
+                    {
+                        "original_directory": working_directory,
+                        "input_directory": str(Path(snapshot["_artifact_dir"]) / "inputs"),
+                        "input_files": snapshot.get("input_files", []),
+                        "legacy_template": not snapshot.get("execution_version"),
+                    }
+                    if snapshot
+                    else {}
+                ),
             },
         )
         job = {
@@ -361,10 +374,12 @@ class RenderService:
                 job["directory"],
             )
 
-    def export_path(self, plot_id, fmt, stem="figure"):
+    def export_path(self, plot_id, fmt, stem="figure", *, allow_pending=False):
         if fmt not in ("png", "svg", "pdf"):
             raise WorkbenchError("不支持的图片格式")
         plot = self.store.get_plot(plot_id)
+        if plot.get("validation_state") == "pending" and not allow_pending:
+            raise WorkbenchError("历史副本须运行验证并保存后导出", "unverified_history", 409)
         if not plot.get("revision"):
             raise WorkbenchError("请先成功运行并保存子图", "unsaved_plot", 409)
         latest = self.latest.get(plot_id)
@@ -437,17 +452,36 @@ def main():
         script = (Path(session["directory"]) / "adapter.py").relative_to(root).as_posix()
         return pool.one_shot(script, str(root), "main")
 
-    def open_session(self, plot_id, stem="figure"):
+    def open_session(self, plot_id, stem="figure", *, draft=None):
         plot = self.store.get_plot(plot_id)
+        changed_code = False
+        if draft:
+            if draft["base_revision"] != plot["revision"]:
+                raise WorkbenchError(
+                    "来源版本已变化，请从草稿列表恢复为副本", "draft_conflict", 409
+                )
+            code = draft["content"].get("code", plot.get("base_code", plot["code"]))
+            if (
+                not isinstance(code, str)
+                or not code.strip()
+                or len(code.encode("utf8")) > 2_000_000
+            ):
+                raise WorkbenchError("图内草稿代码格式无效", "invalid_draft")
+            changed_code = code != plot.get("base_code", plot["code"])
+            plot = copy.deepcopy(plot)
+            plot["base_code"] = code
         if not plot.get("revision"):
             raise WorkbenchError("请先运行并保存当前子图", "unsaved_plot", 409)
-        self.export_path(plot_id, "png", stem)
+        self.export_path(plot_id, "png", stem, allow_pending=True)
         self._output(plot, stem)
         sid = uuid.uuid4().hex
         directory = self._adapter(
             plot, inside(self.store.project_dir(plot["project_id"]), f"cache/sessions/{sid}")
         )
         histories = plot.get("output_overrides") or {"figure": plot.get("overrides", [])}
+        if draft:
+            histories = {**histories, stem: draft["content"]["patches"]}
+            plot["output_overrides"] = histories
         session = {
             "id": sid,
             "plot_id": plot_id,
@@ -459,9 +493,21 @@ def main():
             "lock": threading.RLock(),
             "closed": False,
         }
+        if plot.get("validation_state") == "pending" or changed_code:
+            # Restored graphical copies must verify every output, just as a
+            # changed-code candidate does, before becoming saved revisions.
+            session["code_changed"] = True
+            session["plot"].setdefault("base_code", plot["code"])
         session["worker"] = self._session_worker(session)
         self.sessions[sid] = session
         try:
+            if changed_code:
+                built = session["worker"].ensure_built()
+                self._check_assistant_inputs(session, built)
+                if set(built.get("stems", {})) != set(histories):
+                    raise WorkbenchError(
+                        "草稿生成的图形集合已变化，未恢复", "replay_divergence", 409
+                    )
             response = self._session_render(session, session["patches"])
             return {
                 "session_id": sid,
@@ -473,6 +519,7 @@ def main():
                 "overrides": session["patches"],
                 "preview": response.get("preview"),
                 "renderRevision": response.get("render_revision", 1),
+                "draft_code": plot.get("base_code", plot["code"]),
             }
         except BaseException:
             self.cancel_session(sid)
@@ -537,6 +584,7 @@ def main():
         response = session["response"]
         return {
             "session_id": session["id"],
+            "draft_code": session["plot"].get("base_code", session["plot"]["code"]),
             "stem": session["stem"],
             "script": "adapter.py",
             "project": session["directory"],

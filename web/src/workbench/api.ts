@@ -50,4 +50,15 @@ export async function download(path: string, filename: string, init: RequestInit
   const link = document.createElement('a'); link.href = href; link.download = filename; link.click()
   setTimeout(() => URL.revokeObjectURL(href), 1000)
 }
-export const STARTER_CODE = `import matplotlib.pyplot as plt\n\n# 导入的数据可直接通过 data 使用；未导入时使用下面的示例。\nif "data" in globals() and data is not None:\n    x, y = data.iloc[:, 0], data.iloc[:, 1]\nelse:\n    x, y = [1, 2, 3, 4, 5], [2, 4, 3, 6, 7]\n\nfig, ax = plt.subplots(figsize=(5, 3.5))\nax.plot(x, y, "o-", color="#29465b")\nax.set(xlabel="x", ylabel="y")\nfig.tight_layout()\n`
+export const STARTER_CODE = `import pandas as pd
+import matplotlib.pyplot as plt
+
+# Excel 与代码在同一目录；软件将选区统一保存为 data.xlsx。
+data = pd.read_excel("data.xlsx", sheet_name="Data")
+x, y = data.iloc[:, 0], data.iloc[:, 1]
+
+fig, ax = plt.subplots(figsize=(5, 3.5))
+ax.plot(x, y, "o-", color="#29465b")
+ax.set(xlabel=str(data.columns[0]), ylabel=str(data.columns[1]))
+fig.tight_layout()
+`

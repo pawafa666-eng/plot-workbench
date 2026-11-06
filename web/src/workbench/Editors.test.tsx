@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { fetchAiCapabilities, type AiCapabilities } from '@/lib/api'
 import { PlotEditor, TemplateEditor } from './Editors'
-import { download, type Plot } from './api'
+import { download, type Plot, type Snapshot } from './api'
 import { DEFAULT_SCHEMA } from './model'
 import { menuActionEnabled, performEditorMenuAction } from './menu'
 
@@ -14,6 +14,8 @@ vi.mock('@/lib/api', async (original) => ({ ...await original<typeof import('@/l
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root: Root
+const inputData: Snapshot = { row_count: 2, column_count: 2, columns: ['x', 'y'], index: [1,2], values: [[1,2],[2,4]], dtypes: ['int64','int64'], row_sources: [2,3], column_sources: [1,2], source: { filename: 'example.xlsx' } }
+const templateSchema = { ...DEFAULT_SCHEMA, input_format: 'excel' as const, code_filename: 'plot.py' }
 const outputs = [{ stem: 'figure', title: '曲线', preview_url: '/first.png' }, { stem: 'figure_2', title: '散点', preview_url: '/second.png' }]
 const plot = { id: 'plot-one', project_id: 'project-one', name: '普通脚本', state: 'CODE_EDITABLE', code: 'import matplotlib.pyplot as plt\nplt.plot([1, 2])', data: null, schema: DEFAULT_SCHEMA, source: { kind: 'code' }, revision: 1, saved_revision: 1, preview_url: '/first.png', outputs } satisfies Plot
 
@@ -30,7 +32,7 @@ afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllGloba
 async function renderPlot(initial: Plot = plot) { await act(async () => root.render(<TooltipProvider><PlotEditor initial={initial} templates={[]} onChanged={() => {}} onBack={() => {}} /></TooltipProvider>)) }
 
 it('requires a fresh verified run before saving a shared template draft', async () => {
-  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={{ id: 'imported', name: 'Shared', scope: 'global', favorite: false, code: 'print(1)', data: null, schema: DEFAULT_SCHEMA, revision: 0, validation_state: 'pending' }} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={{ id: 'imported', name: 'Shared', scope: 'global', favorite: false, code: 'print(1)', data: inputData, schema: templateSchema, revision: 0, validation_state: 'pending' }} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
   expect(document.querySelector('[data-template-pending]')).not.toBeNull()
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.disabled).toBe(false)
@@ -104,14 +106,16 @@ it('invalidates template validation when the user applies a Codex proposal', asy
   vi.mocked(fetchAiCapabilities).mockResolvedValue(caps)
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
-    const body = url.endsWith('/templates/validate') ? { job_id: 'validation' }
+    const body = url.endsWith('/dimensions') ? { schema: templateSchema } : url.endsWith('/templates/validate') ? { job_id: 'validation' }
       : url.endsWith('/jobs/validation') ? { id: 'validation', status: 'success', result: { run_id: 'validated', preview_url: '/first.png', outputs } }
       : url.endsWith('/assistant/runs') && init?.method === 'POST' ? { id: 'assistant-one', status: 'running' }
       : { id: 'assistant-one', status: 'done', code: 'new template code', changed: true, diff: '+new template code' }
     return { ok: true, json: async () => body } as Response
   })
-  await act(async () => root.render(<TooltipProvider><TemplateEditor categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={{ id: 'pending-template', name: '测试', scope: 'global', favorite: false, revision: 0, validation_state: 'pending', code: plot.code, data: inputData, schema: templateSchema }} categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.click())
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-dimensions-confirm]')!.click())
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-assistant]')!.click())
   await act(async () => {
@@ -127,6 +131,8 @@ it('invalidates template validation when the user applies a Codex proposal', asy
   expect(document.querySelector<HTMLTextAreaElement>('[data-wb-code]')!.value).toBe('new template code')
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.click())
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-dimensions-confirm]')!.click())
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/templates'))).toBe(false)
 })
@@ -148,4 +154,13 @@ it('blocks export, save and Tavotto when edited code no longer matches the saved
   expect(document.querySelector('[data-dialog="workbench-export"]')).toBeNull()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/save'))).toBe(false)
   expect(document.querySelector<HTMLImageElement>('[data-wb-preview-image]')?.getAttribute('src')).toBe('/first.png')
+})
+
+
+it('requires imported data before choosing a template instead of injecting its example values', async () => {
+  await renderPlot()
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-picker-open]')!.disabled).toBe(true)
+  await act(async () => root.render(null))
+  await renderPlot({ ...plot, data: inputData })
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-picker-open]')!.disabled).toBe(false)
 })

@@ -121,6 +121,7 @@ def test_template_requires_successful_matching_run_and_compatible_dimensions(cli
     template = client.get("/api/workbench/templates").get_json()["templates"][0]
     project = create_folder_project(client, "P")
     data = template["data"]
+    data["source"]["filename"] = "example.xlsx"
     matches = client.post(
         "/api/workbench/templates/compatible", json={"project_id": project["id"], "data": data}
     ).get_json()
@@ -142,6 +143,19 @@ def test_template_requires_successful_matching_run_and_compatible_dimensions(cli
     job = client.post("/api/workbench/templates/validate", json=payload).get_json()
     result = settle(client, job["job_id"])
     assert result["status"] == "success", result
+    confirmation = client.post(
+        f"/api/workbench/jobs/{job['job_id']}/dimensions",
+        json={
+            **payload,
+            "schema": result["result"]["schema"],
+            "dimensions": {
+                "rows": payload["schema"]["rows"],
+                "columns": payload["schema"]["columns"],
+            },
+        },
+    )
+    assert confirmation.status_code == 200, confirmation.get_json()
+    payload["schema"] = confirmation.get_json()["schema"]
     saved = client.post(
         "/api/workbench/templates",
         json={

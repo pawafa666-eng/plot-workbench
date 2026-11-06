@@ -219,10 +219,10 @@ it('blocks dismissal while the explicit apply operation is pending', async () =>
   onApply.mockImplementationOnce(() => applied.promise)
   await render(); await request()
   await act(async () => button('apply').click())
-  expect(button('close').disabled).toBe(true)
+  expect(button('minimize').disabled).toBe(true)
   expect(document.querySelector('[data-dialog="workbench-code-assistant"] [data-dialog-close]')).toBeNull()
   await act(async () => {
-    button('close').click()
+    button('minimize').click()
     document.querySelector('[data-dialog="workbench-code-assistant"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   })
   expect(onClose).not.toHaveBeenCalled()
@@ -271,14 +271,14 @@ it('allows a normal reply without code changes and keeps Apply disabled', async 
   expect(document.querySelector('[data-wb-assistant-error]')).toBeNull()
 })
 
-it('retains the successful proposal, conversation and input when a follow-up fails, then retries that turn', async () => {
+it('clears accepted input while retaining the conversation and retryable failed turn', async () => {
   let task = 0
   vi.mocked(fetch).mockImplementation(async (_input, init) => json(init?.method === 'POST'
     ? { id: `task-${++task}`, status: 'running' }
     : task === 2 ? { ...generated, id: 'task-2', status: 'failed', changed: false, error: '模型暂时不可用' } : { ...generated, id: `task-${task}`, reply: task === 1 ? '已加入误差棒。' : '字体已调整。' }))
   await render(); await request(); await typePrompt('统一字体')
   await act(async () => button('start').click())
-  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('统一字体')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('')
   expect(document.querySelectorAll('[data-wb-assistant-message="user"]')).toHaveLength(2)
   expect(button('apply').disabled).toBe(false)
   await act(async () => button('retry').click())
@@ -299,17 +299,17 @@ it('disables the retained proposal during a follow-up and restores it after canc
   expect(button('apply').disabled).toBe(true)
   await act(async () => button('cancel').click())
   expect(button('apply').disabled).toBe(false)
-  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('统一字体')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('')
   await act(async () => progress.resolve(json({ ...generated, code: 'late code' })))
   await act(async () => button('apply').click())
   expect(onApply).toHaveBeenCalledWith(generated)
 })
 
-it('does not cancel an active task when the dialog is closed', async () => {
+it('does not cancel an active task when the dialog is minimized', async () => {
   const progress = deferred<Response>()
   vi.mocked(fetch).mockImplementation((_input, init) => init?.method === 'POST' ? Promise.resolve(json({ id: 'task-one', status: 'running' })) : progress.promise)
   await render(); await request()
-  await act(async () => button('close').click())
+  await act(async () => button('minimize').click())
   expect(onClose).toHaveBeenCalledOnce()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/task-one/cancel'))).toBe(false)
   await act(async () => progress.resolve(json(generated)))
@@ -373,7 +373,45 @@ it('releases the conversation when the server confirms the task no longer exists
   await render({ onDiscard })
   await request()
   expect(document.querySelector('[data-wb-assistant-status]')?.textContent).toContain('中断')
-  expect(button('discard').disabled).toBe(false)
-  await act(async () => button('discard').click())
+  expect(document.querySelector('[data-dialog="workbench-code-assistant"] [data-dialog-close]')).not.toBeNull()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-dialog="workbench-code-assistant"] [data-dialog-close]')!.click())
   expect(onDiscard).toHaveBeenCalledOnce()
+})
+
+
+it('clears accepted input while processing and only discards after explicit force-end confirmation', async () => {
+  const progress = deferred<Response>()
+  const discarded = vi.fn()
+  vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/cancel') ? Promise.resolve(json({ ok: true })) : init?.method === 'POST' ? Promise.resolve(json({ id: 'running-task', status: 'running' })) : progress.promise)
+  await render({ onDiscard: discarded }); await request()
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.value).toBe('')
+  expect(document.querySelector<HTMLTextAreaElement>('[data-wb-assistant-prompt]')!.disabled).toBe(true)
+  const end = () => document.querySelector<HTMLButtonElement>('[data-dialog="workbench-code-assistant"] [data-dialog-close]')!
+  await act(async () => end().click())
+  expect(discarded).not.toHaveBeenCalled()
+  expect(document.querySelector('[data-dialog="workbench-assistant-end"]')).not.toBeNull()
+  await act(async () => button('end-return').click())
+  expect(discarded).not.toHaveBeenCalled()
+  await act(async () => end().click())
+  await act(async () => button('force-end').click())
+  expect(discarded).toHaveBeenCalledOnce()
+  expect(onApply).not.toHaveBeenCalled()
+  await act(async () => progress.resolve(json(generated)))
+  expect(onApply).not.toHaveBeenCalled()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/running-task/cancel'))).toBe(true)
+})
+
+it('sets a selected model as the app default only after the explicit action', async () => {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+  await render()
+  expect(button('default-model').disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-assistant-model] button')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  const option = document.querySelector<HTMLElement>('[data-ui-select-option="detected-model"]')!
+  expect(option).not.toBeNull()
+  await act(async () => option.click())
+  expect(useAiStore.getState().models.codex).toBeUndefined()
+  expect(button('default-model').disabled).toBe(false)
+  await act(async () => button('default-model').click())
+  expect(useAiStore.getState().models.codex).toBe('detected-model')
+  expect(button('default-model').disabled).toBe(true)
 })

@@ -2,7 +2,7 @@ import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useRef, type ReactNode, type RefObject } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { cn } from '@/lib/utils'
 import { IconButton } from './Button'
 
@@ -11,6 +11,9 @@ export type DialogSize = 'sm' | 'md' | 'lg'
 const WIDTH: Record<DialogSize, number> = { sm: 360, md: 420, lg: 560 }
 
 interface DialogProps {
+  floating?: boolean
+  headerActions?: ReactNode
+  closeLabel?: string
   open: boolean
   onOpenChange: (v: boolean) => void
   title: ReactNode
@@ -79,6 +82,9 @@ export function Dialog({
   anchor,
   chrome = 'default',
   initialFocusRef,
+  floating = false,
+  headerActions,
+  closeLabel,
 }: DialogProps) {
   const shell = chrome === 'shell'
   const locked = busy || blockDismiss
@@ -92,21 +98,34 @@ export function Dialog({
   // 容器带 tabIndex=-1（Radix 自己给的），焦点停在它上面：读屏念标题与说明，
   // 用户再 Tab 进第一个控件；Tab 顺序不变，关闭钮仍在标题栏里。
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  useEffect(() => {
+    if (!floating || !open) return
+    function clamp() {
+      const box = contentRef.current?.getBoundingClientRect()
+      if (!box) return
+      setPosition((old) => ({ x: Math.max(8, Math.min(old?.x ?? (innerWidth - box.width) / 2, innerWidth - box.width - 8)), y: Math.max(8, Math.min(old?.y ?? (innerHeight - box.height) / 2, innerHeight - box.height - 8)) }))
+    }
+    clamp(); window.addEventListener('resize', clamp)
+    return () => window.removeEventListener('resize', clamp)
+  }, [floating, open, width, height])
 
   return (
-    <RD.Root open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
+    <RD.Root modal={!floating} open={open} onOpenChange={(v) => (locked && !v ? undefined : onOpenChange(v))}>
       <RD.Portal>
-        <RD.Overlay
+        {!floating && <RD.Overlay
           className={cn(
             // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）
             'fixed inset-0 z-40 bg-ink/30',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}
-        />
+        />}
         <RD.Content
           ref={contentRef}
-          style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}) }}
+          style={{ width: width ?? WIDTH[size], ...(height ? { height } : {}), ...(floating ? { resize: 'both', minWidth: 'min(540px, calc(100vw - 16px))', minHeight: 'min(420px, 86vh)', ...(position ? { left: position.x, top: position.y, translate: 'none' } : {}) } : {}) }}
+          data-floating={floating || undefined}
           aria-busy={busy || undefined}
           data-dialog={anchor ?? ''}
           data-covered={covered || undefined}
@@ -140,7 +159,7 @@ export function Dialog({
             }
           }}
           onEscapeKeyDown={(e) => locked && e.preventDefault()}
-          onInteractOutside={(e) => locked && e.preventDefault()}
+          onInteractOutside={(e) => (locked || floating) && e.preventDefault()}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 max-h-[86vh] max-w-[calc(100vw-2rem)]',
             '-translate-x-1/2 -translate-y-1/2',
@@ -154,6 +173,20 @@ export function Dialog({
           )}
         >
           <div
+            data-dialog-drag={floating || undefined}
+            style={floating ? { cursor: 'move', touchAction: 'none', paddingRight: 88 } : undefined}
+            onPointerDown={(e) => {
+              if (!floating || e.button !== 0 || (e.target as HTMLElement).closest('button, input, select, textarea, a')) return
+              const box = contentRef.current!.getBoundingClientRect()
+              drag.current = { x: e.clientX, y: e.clientY, left: box.left, top: box.top }
+              e.currentTarget.setPointerCapture(e.pointerId)
+            }}
+            onPointerMove={(e) => {
+              const from = drag.current; const box = contentRef.current?.getBoundingClientRect()
+              if (!from || !box) return
+              setPosition({ x: Math.max(8, Math.min(from.left + e.clientX - from.x, innerWidth - box.width - 8)), y: Math.max(8, Math.min(from.top + e.clientY - from.y, innerHeight - box.height - 8)) })
+            }}
+            onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}
             className={cn(
               'flex gap-3',
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
@@ -169,6 +202,7 @@ export function Dialog({
               )}
             </div>
           </div>
+          {headerActions && <div className="absolute right-12 top-2">{headerActions}</div>}
           {/* 没有正文（标题已说完）就不摆这块留白 */}
           {children != null && children !== false && (
             <div
@@ -196,7 +230,7 @@ export function Dialog({
                   审计 S1）；Shift+Tab 或走到末尾仍能到它，Esc 照旧。 */}
               <IconButton
                 data-dialog-close
-                label={t('actions.close')}
+                label={closeLabel ?? t('actions.close')}
                 tip={false}
                 className={cn(
                   'absolute text-ink-3 hover:text-ink',

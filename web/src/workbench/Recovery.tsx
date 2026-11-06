@@ -8,7 +8,7 @@ export interface EditorDraft {
   scope: 'global' | 'project'; name: string; base_revision: number; generation: number; updated_at?: string
   content: Record<string, unknown>
 }
-export interface WorkspacePreferences { density: 'standard' | 'compact'; sidebar_collapsed: boolean; project_view: 'cards' | 'list' }
+export interface WorkspacePreferences { density: 'standard' | 'compact'; sidebar_collapsed: boolean; project_view: 'cards' | 'list'; codex_model?: string }
 type DraftSummary = Omit<EditorDraft, 'content'>
 interface Workspace {
   root: string; drafts: DraftSummary[]; problems: string[]; preferences: WorkspacePreferences; preferencesReady: boolean

@@ -58,7 +58,7 @@ def _multipart(base_url, path, *, filename, payload, fields, headers):
         (
             f"--{boundary}\r\n".encode(),
             f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode(),
-            b"Content-Type: text/csv\r\n\r\n",
+            b"Content-Type: application/octet-stream\r\n\r\n",
             payload,
             b"\r\n",
             f"--{boundary}--\r\n".encode(),
@@ -97,7 +97,7 @@ def _settle(base_url, job_id, headers):
 
 
 def smoke_workbench(base_url: str, headers: dict[str, str] | None = None) -> None:
-    """Exercise status, root switching, CSV selection, render, save and export.
+    """Exercise legacy CSV, Excel import/selection, render, save and export.
 
     The smoke temporarily selects an isolated folder and always restores the
     original data root, so it does not add test projects to a user's workspace.
@@ -136,6 +136,36 @@ def smoke_workbench(base_url: str, headers: dict[str, str] | None = None) -> Non
                 headers=auth,
             )
             assert (selected["data"]["row_count"], selected["data"]["column_count"]) == (3, 2)
+            # Manufacture a real external Excel fixture with the installed data
+            # worker, then cross the same upload boundary as a user workbook.
+            _, workbook, _ = _request(
+                base_url,
+                "/api/workbench/data/workbook",
+                method="POST",
+                body={"data": {**selected["data"], "source": {"filename": "smoke.xlsx"}}},
+                headers=auth,
+            )
+            excel = _multipart(
+                base_url,
+                "/api/workbench/data/inspect",
+                filename="smoke.xlsx",
+                payload=workbook,
+                fields={"sheet": "Data"},
+                headers=auth,
+            )
+            selected = _json(
+                base_url,
+                "/api/workbench/data/select",
+                method="POST",
+                body={
+                    "table_id": excel["table_id"],
+                    "rows": [{"start": 0, "end": 0}],
+                    "columns": [{"start": 0, "end": 0}],
+                    "header": True,
+                },
+                headers=auth,
+            )
+            assert selected["data"]["values"] == [["a", 2], ["b", 4], ["c", 3]]
 
             working_folder = Path(scratch) / "research"
             working_folder.mkdir()

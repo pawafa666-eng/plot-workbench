@@ -160,6 +160,6 @@ function EmbeddedCanvas({ panelId, sessionId, data, schema, busy, error, onApply
     {(error || render?.error) && <div className="wb-error" role="alert">{error || formatMessage(render?.error ?? null)}</div>}
     <div className={`wb-tavotto-body${busy ? ' wb-locked' : ''}`}><div className="wb-canvas-stage"><CanvasStage /></div>{panel && <aside data-wb-inspector className="wb-inspector"><ElementInspector panel={panel} /></aside>}</div>
     <div className="wb-editor-foot">完成后将保存到 Python 脚本，后续可继续进行图内编辑。取消或验证失败不会锁定代码。</div>
-    {!assistant.host && assistantStarted && source && <CodeAssistant {...source} open={assistantOpen} onReopen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} />}
+    {!assistant.host && assistantStarted && source && <CodeAssistant {...source} open={assistantOpen} onReopen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} onDiscard={() => { setAssistantStarted(false); setAssistantOpen(false) }} />}
   </div>
 }

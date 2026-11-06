@@ -1,8 +1,8 @@
 export interface Range { start: number; end: number }
-export interface AxisSchema { mode: 'fixed' | 'variable'; value?: number; min?: number }
-export interface Schema { rows: AxisSchema; columns: AxisSchema; column_roles?: { index: number; name: string; dtype: 'numeric' | 'text' | 'any' }[]; description?: string }
+export interface AxisSchema { mode: 'fixed' | 'variable' | 'maximum' | 'any'; value?: number; min?: number; max?: number }
+export interface Schema { rows: AxisSchema; columns: AxisSchema; column_roles?: { index: number; name: string; dtype: 'numeric' | 'text' | 'any' }[]; description?: string; input_format?: 'excel'; code_filename?: string }
 export function schemaSummary(schema: Schema): string {
-  const axis = (value: AxisSchema) => value.mode === 'fixed' ? `${value.value ?? '?'} ` : `${value.min ?? 0}+ `
+  const axis = (value: AxisSchema) => value.mode === 'fixed' ? `${value.value ?? '?'} ` : value.mode === 'maximum' ? `${value.max ?? '?'}− ` : value.mode === 'any' ? '不限' : `${value.min ?? 0}+ `
   return `${axis(schema.rows)}行 × ${axis(schema.columns)}列`
 }
 export function canCommitRun(fingerprint: string, run: { runId: string; fingerprint: string } | null, busy: boolean): boolean {

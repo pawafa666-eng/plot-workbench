@@ -44,6 +44,9 @@ def execute(
     if not root.is_dir():
         raise FileNotFoundError(f"项目工作目录不存在：{root}")
     filename = str(Path(source_path).resolve()) if source_path else str(root / "plot.py")
+    if schema.get("input_format") == "excel":
+        helper.require_excel_data(snapshot)
+        filename = str(root / "source.py")
     namespace = {
         "__name__": "_pwb_user_plot" if legacy_template else "__main__",
         "__file__": filename,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import re
@@ -172,7 +173,15 @@ def _read_ui_preferences(path):
         or ("sidebar_collapsed" in value and type(value["sidebar_collapsed"]) is not bool)
     ):
         raise WorkbenchError("显示设置内容无效，原文件已保留", "invalid_preferences", 409)
-    return {k: v for k, v in value.items() if k in {"density", "sidebar_collapsed", "project_view"}}
+    if "codex_model" in value and (
+        not isinstance(value["codex_model"], str) or len(value["codex_model"]) > 150
+    ):
+        raise WorkbenchError("默认模型设置无效", "invalid_preferences", 409)
+    return {
+        k: v
+        for k, v in value.items()
+        if k in {"density", "sidebar_collapsed", "project_view", "codex_model"}
+    }
 
 
 def _run_matches(service: RenderService, run_id: str, payload: dict) -> dict:
@@ -350,7 +359,7 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.patch("/preferences")
     def save_preferences():
         body = _body()
-        allowed = {"density", "sidebar_collapsed", "project_view"}
+        allowed = {"density", "sidebar_collapsed", "project_view", "codex_model"}
         if not set(body) <= allowed:
             raise WorkbenchError("未知的工作区偏好设置")
         if ("density" in body and body["density"] not in ("standard", "compact")) or (
@@ -359,6 +368,10 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             raise WorkbenchError("工作区显示设置无效")
         if "sidebar_collapsed" in body and not isinstance(body["sidebar_collapsed"], bool):
             raise WorkbenchError("侧栏设置无效")
+        if "codex_model" in body and (
+            not isinstance(body["codex_model"], str) or not 1 <= len(body["codex_model"]) <= 150
+        ):
+            raise WorkbenchError("默认模型设置无效")
         with manager.lock:
             path = Path(config.data_dir()) / "workbench-ui.json"
             value = _read_ui_preferences(path)
@@ -587,11 +600,12 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.post("/templates/validate")
     def validate_template():
         body = _body()
+        table_data.require_excel_data(body.get("data"))
         job_id = manager.service.render(
             {
                 "code": _need(body, "code"),
                 "data": body.get("data"),
-                "schema": body.get("schema") or {},
+                "schema": {**(body.get("schema") or {}), "input_format": "excel"},
             }
         )
         return jsonify({"job_id": job_id})
@@ -599,7 +613,11 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.post("/templates")
     def create_template():
         body = _body()
+        table_data.require_excel_data(body.get("data"))
+        body["schema"] = {**(body.get("schema") or {}), "input_format": "excel"}
         job = _run_matches(manager.service, _need(body, "run_id"), body)
+        if not job.get("dimensions_confirmed"):
+            raise WorkbenchError("请先确认模板数据要求", "dimensions_unconfirmed", 409)
         payload = {
             **body,
             "data": job["payload"]["data"],
@@ -618,6 +636,8 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
         body = _body()
         content_keys = {"code", "data", "schema"} & set(body)
         if content_keys:
+            table_data.require_excel_data(body.get("data"))
+            body["schema"] = {**(body.get("schema") or {}), "input_format": "excel"}
             if not content_keys.issuperset({"code", "data", "schema"}):
                 raise WorkbenchError("修改模板代码时必须同时提交数据和参数说明")
             current = manager.store.get_template(template_id)
@@ -626,6 +646,8 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             ) != current.get("project_id"):
                 raise WorkbenchError("模板范围不能在编辑时切换")
             job = _run_matches(manager.service, _need(body, "run_id"), body)
+            if not job.get("dimensions_confirmed"):
+                raise WorkbenchError("请先确认模板数据要求", "dimensions_unconfirmed", 409)
             payload = {
                 **current,
                 **body,
@@ -654,6 +676,10 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def render_plot(plot_id):
         manager.store.assert_editable(plot_id)
         body = _body()
+        if body.get("template_id"):
+            manager.store.get_template(body["template_id"])
+            table_data.require_excel_data(body.get("data"))
+            body["schema"] = {**(body.get("schema") or {}), "input_format": "excel"}
         payload = {
             "code": _need(body, "code"),
             "data": body.get("data"),
@@ -671,6 +697,28 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def cancel_job(job_id):
         manager.service.cancel_job(job_id)
         return jsonify({"ok": True})
+
+    @bp.post("/jobs/<job_id>/dimensions")
+    def confirm_dimensions(job_id):
+        body = _body()
+        with manager.service.lock:
+            job = _run_matches(manager.service, job_id, body)
+            axes = _need(body, "dimensions")
+            if not isinstance(axes, dict) or set(axes) != {"rows", "columns"}:
+                raise WorkbenchError("请确认行数和列数要求")
+            schema = {**job["payload"]["schema"], **axes}
+            issues = table_data.validate_schema(job["payload"]["data"], schema)
+            if issues:
+                raise WorkbenchError("；".join(issue["message"] for issue in issues))
+            job["payload"]["schema"] = schema
+            job["requested_payload"]["schema"] = schema
+            job["result"]["schema"] = schema
+            # Dimensions are metadata; code, selected data and verified outputs stay bound.
+            from .rendering import fingerprint
+
+            job["fingerprint"] = fingerprint(job["payload"])
+            job["dimensions_confirmed"] = True
+            return jsonify({"schema": schema})
 
     @bp.post("/plots/<plot_id>/save")
     def save_plot(plot_id):
@@ -727,6 +775,18 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             j=body.get("j"),
         )
         return jsonify({"data": transformed, "preview": table_data.preview_data(transformed)})
+
+    @bp.post("/data/workbook")
+    def export_workbook():
+        snapshot = _need(_body(), "data")
+        table_data.require_excel_data(snapshot)
+        result = run_operation("workbook", data=snapshot)
+        return send_file(
+            io.BytesIO(base64.b64decode(result["base64"])),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="data.xlsx",
+        )
 
     @bp.get("/trash")
     def list_trash():

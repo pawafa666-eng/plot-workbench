@@ -6,7 +6,7 @@ import { Button, IconButton } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
 import { Reveal } from '@/components/ui/Field'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { ArrowDown, ArrowUp, ChevronRight, FileCodeCorner, Maximize2, Minimize2, RefreshCw, Settings, Square } from '@/components/ui/icons'
+import { ArrowDown, ArrowUp, ChevronRight, FileCodeCorner, Maximize2, Minimize2, RefreshCw, Settings, Square, Minus } from '@/components/ui/icons'
 import { TextArea } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { agentById, fetchAiCapabilities, type AiCapabilities } from '@/lib/api'
@@ -15,6 +15,7 @@ import { useUiStore } from '@/store/uiStore'
 import type { PanelOverride } from '@/types/document'
 import { api, errorText, post, WorkbenchError, type Snapshot } from './api'
 import { fingerprintOf, type Schema } from './model'
+import { useWorkspace } from './Recovery'
 
 export interface AssistantRun {
   id: string
@@ -72,10 +73,15 @@ function historyFor(turns: ChatTurn[]): HistoryMessage[] | null {
 
 export function CodeAssistant(props: CodeAssistantProps) {
   const { code, data, schema, contextKey, sessionId, patches } = props
+  const workspace = useWorkspace()
+  const storedModel = useAiStore((s) => s.models.codex)
+  const defaultModel = workspace.preferences.codex_model ?? storedModel ?? CLI_DEFAULT
+  const modelTouched = useRef(false)
+  const [endRequested, setEndRequested] = useState(false)
   const [caps, setCaps] = useState<AiCapabilities | null>(null)
   const [detecting, setDetecting] = useState(true)
   const [prompt, setPrompt] = useState('')
-  const [model, setModel] = useState(useAiStore.getState().models.codex ?? CLI_DEFAULT)
+  const [model, setModel] = useState(defaultModel)
   const [effort, setEffort] = useState(useAiStore.getState().efforts.codex ?? CLI_DEFAULT)
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [proposal, setProposal] = useState<{ run: AssistantRun; fingerprint: string } | null>(null)
@@ -128,6 +134,9 @@ export function CodeAssistant(props: CodeAssistantProps) {
     } catch (e) { if (alive.current && capsSequence.current === token) setError(errorText(e)) }
     finally { if (alive.current && capsSequence.current === token) setDetecting(false) }
   }, [])
+  useEffect(() => {
+    if (!modelTouched.current && workspace.preferencesReady && caps) setModel(defaultModel === CLI_DEFAULT || info?.models.includes(defaultModel) ? defaultModel : CLI_DEFAULT)
+  }, [workspace.preferencesReady, defaultModel, caps, info])
   const dispose = useCallback(() => {
     alive.current = false; sequence.current++; capsSequence.current++
     if (timer.current) clearTimeout(timer.current)
@@ -192,7 +201,6 @@ export function CodeAssistant(props: CodeAssistantProps) {
     follow.current = true; setAtBottom(true)
     if (freshContext) { lastSuccess.current = null; setProposal(null) }
     setCaptured(sourceFingerprint); setError(''); setRunning(true); setProcessOpen(false); setPreviewing(false)
-    setPrompt(text)
     setTurns([...previous, { id: turnId, prompt: text, status: 'running' }])
     const parent = lastSuccess.current?.fingerprint === sourceFingerprint ? lastSuccess.current.id : undefined
     const data_context = source.data ? { row_count: source.data.row_count, column_count: source.data.column_count, columns: source.data.columns, dtypes: source.data.dtypes } : undefined
@@ -209,11 +217,12 @@ export function CodeAssistant(props: CodeAssistantProps) {
         return
       }
       activeRun.current = created.id
+      setPrompt('')
       await poll(created.id, token, turnId, sourceFingerprint)
     } catch (e) {
       if (alive.current && sequence.current === token) {
         const message = errorText(e)
-        requestBusy.current = false; setError(message); setRunning(false)
+        requestBusy.current = false; setError(message); setRunning(false); if (!retry) setPrompt(text)
         updateTurn(turnId, { status: 'failed', error: message })
       }
     }
@@ -251,9 +260,20 @@ export function CodeAssistant(props: CodeAssistantProps) {
     if (applying) return
     latest.current.onClose()
   }
-  function discard() {
-    if (running || activeRun.current || applying || stopping) return
-    dispose(); props.onDiscard?.()
+  function requestEnd() {
+    if (applying) return
+    if (running || activeRun.current || requestBusy.current || previewing) setEndRequested(true)
+    else void endConversation()
+  }
+  async function endConversation() {
+    if (applying || stopping) return
+    setStopping(true)
+    const id = activeRun.current
+    try {
+      if (id) await post(`/assistant/runs/${id}/cancel`)
+      activeRun.current = null
+      dispose(); latest.current.onDiscard?.(); latest.current.onClose()
+    } catch (e) { setError(`结束对话失败，请重试：${errorText(e)}`); setStopping(false); setEndRequested(false) }
   }
   async function apply() {
     if (!canApply || !proposal || proposal.fingerprint !== contextFingerprint(latest.current)) return
@@ -264,11 +284,11 @@ export function CodeAssistant(props: CodeAssistantProps) {
     } catch (e) { if (alive.current) { setError(errorText(e)); if (e instanceof WorkbenchError && ['assistant_preview_changed', 'assistant_preview_required'].includes(e.code ?? '')) setComparison(null) } }
     finally { if (alive.current) setApplying(false) }
   }
-  return <><Dialog open={props.open ?? true} title={<span className="wb-assistant-title"><AgentIcon iconKey="codex" size={24} /><span>Codex 对话</span><span className="wb-assistant-context">{props.targetLabel ?? (sessionId ? '当前图形' : '模板代码')}</span></span>} width={expanded ? 1280 : 920} height={expanded ? '86vh' : 'min(760px, 86vh)'} chrome="shell" busy={applying} onOpenChange={(open) => { if (!open) close() }} anchor="workbench-code-assistant" footer={<><span className="wb-assistant-apply-note">{props.targetAvailable === false ? '请先返回原来的编辑页面。' : proposal?.run.changed ? '修改已暂存，点击应用后才会替换。' : '修改会先暂存，供你查看和应用。'}</span>{props.onReturn && <Button onClick={props.onReturn} data-wb-assistant-return>{sessionId ? '打开原图' : '返回模板'}</Button>}{props.onDiscard && <Button disabled={running || !!activeRun.current || stopping || applying} onClick={discard} data-wb-assistant-discard>结束对话</Button>}<Button disabled={applying} onClick={close} data-wb-assistant-close>关闭</Button><Button variant="secondary" disabled={!canApply} loading={applying} loadingLabel="正在应用并验证…" onClick={() => void apply()} data-wb-assistant-apply><FileCodeCorner size={ICON_SIZE.sm} />{sessionId ? '应用到当前图形' : '应用到模板代码'}</Button></>}>
+  return <><Dialog floating closeLabel="结束对话" headerActions={<IconButton label="最小化对话" tip={false} disabled={applying} onClick={close} data-wb-assistant-minimize><Minus size={ICON_SIZE.md} /></IconButton>} open={props.open ?? true} title={<span className="wb-assistant-title"><AgentIcon iconKey="codex" size={24} /><span>Codex 对话</span><span className="wb-assistant-context">{props.targetLabel ?? (sessionId ? '当前图形' : '模板代码')}</span></span>} width={expanded ? 1280 : 920} height={expanded ? '86vh' : 'min(760px, 86vh)'} chrome="shell" busy={applying} onOpenChange={(open) => { if (!open) requestEnd() }} anchor="workbench-code-assistant" footer={<><span className="wb-assistant-apply-note">{props.targetAvailable === false ? '请先返回原来的编辑页面。' : proposal?.run.changed ? '修改已暂存，点击应用后才会替换。' : '修改会先暂存，供你查看和应用。'}</span>{props.onReturn && <Button onClick={props.onReturn} data-wb-assistant-return>{sessionId ? '打开原图' : '返回模板'}</Button>}<Button variant="secondary" disabled={!canApply} loading={applying} loadingLabel="正在应用并验证…" onClick={() => void apply()} data-wb-assistant-apply><FileCodeCorner size={ICON_SIZE.sm} />{sessionId ? '应用到当前图形' : '应用到模板代码'}</Button></>}>
     <div className="wb-assistant" data-wb-assistant data-expanded={expanded || undefined}>
       <div className="wb-assistant-toolbar">
         <span className="wb-assistant-readiness" data-wb-assistant-readiness><span className="wb-assistant-ready-dot" data-usable={info?.usable || undefined} aria-hidden />{detecting ? '正在检测 Codex…' : info ? stateLabel(info.state) : '未检测到 Codex'}</span>
-        <div className="wb-assistant-options">{info?.features.model_selection && <label data-wb-assistant-model><span className="sr-only">模型</span><Select ariaLabel="Codex 模型" value={model} onChange={setModel} disabled={running || !!activeRun.current || applying} options={[{ value: CLI_DEFAULT, label: '跟随 Codex 默认模型' }, ...info.models.map((value) => ({ value, label: value }))]} /></label>}{info?.features.effort_selection && <label data-wb-assistant-effort><span className="sr-only">推理强度</span><Select ariaLabel="Codex 推理强度" value={effort} onChange={setEffort} disabled={running || !!activeRun.current || applying} options={[{ value: CLI_DEFAULT, label: '跟随 Codex 默认设置' }, ...info.efforts.map((value) => ({ value, label: value }))]} /></label>}</div>
+        <div className="wb-assistant-options">{info?.features.model_selection && <label data-wb-assistant-model><span className="sr-only">模型</span><Select ariaLabel="Codex 模型" value={model} onChange={(value) => { modelTouched.current = true; setModel(value) }} disabled={running || !!activeRun.current || applying} options={[{ value: CLI_DEFAULT, label: '跟随 Codex 默认模型' }, ...info.models.map((value) => ({ value, label: value }))]} /></label>}{info?.features.model_selection && <Button disabled={!workspace.preferencesReady || model === defaultModel || running || applying} data-wb-assistant-default-model onClick={() => { workspace.setPreferences({ codex_model: model }); useAiStore.getState().setModel('codex', model) }}>设为默认模型</Button>}{info?.features.effort_selection && <label data-wb-assistant-effort><span className="sr-only">推理强度</span><Select ariaLabel="Codex 推理强度" value={effort} onChange={setEffort} disabled={running || !!activeRun.current || applying} options={[{ value: CLI_DEFAULT, label: '跟随 Codex 默认设置' }, ...info.efforts.map((value) => ({ value, label: value }))]} /></label>}</div>
         <div className="wb-assistant-tools"><IconButton label="重新检测 Codex" disabled={detecting || running || !!activeRun.current || applying} onClick={() => void loadCaps(true)} data-wb-assistant-refresh><RefreshCw size={ICON_SIZE.md} /></IconButton><IconButton label="编码 Agent 设置" disabled={running || !!activeRun.current || applying} onClick={() => { close(); useUiStore.getState().setSettingsOpen(true, 'ai') }} data-wb-assistant-settings><Settings size={ICON_SIZE.md} /></IconButton><IconButton label={expanded ? '还原对话窗口' : '放大对话窗口'} disabled={applying} onClick={() => setExpanded(!expanded)} data-wb-assistant-expand>{expanded ? <Minimize2 size={ICON_SIZE.md} /> : <Maximize2 size={ICON_SIZE.md} />}</IconButton></div>
       </div>
       {!detecting && !info?.usable && <div className="wb-assistant-notice">请在编码 Agent 设置中完成 Codex 安装、登录或启用，然后重新检测。</div>}
@@ -290,5 +310,5 @@ export function CodeAssistant(props: CodeAssistantProps) {
         <p className="wb-assistant-help">仅发送代码、数据规范与列名/类型，不自动发送数据值。{sessionId ? '应用后仍需“完成并保存”验证。' : '应用后请运行验证并保存模板。'}</p>
       </div>
     </div>
-  </Dialog>{props.open === false && lastTurn && <div className="wb-assistant-notification" data-wb-assistant-notification role="status"><span><strong>{lastTurn.status === 'done' ? 'Codex 已完成' : STATUS[lastTurn.status]}</strong>{props.targetLabel && <small>{props.targetLabel}</small>}</span><Button variant="secondary" onClick={props.onReopen}>查看对话</Button>{props.onReturn && <Button onClick={props.onReturn}>{sessionId ? '打开原图' : '返回模板'}</Button>}</div>}</>
+  </Dialog>{endRequested && <Dialog open title="结束 Codex 对话？" anchor="workbench-assistant-end" busy={stopping} onOpenChange={(v) => { if (!v) setEndRequested(false) }} footer={<><Button disabled={stopping} onClick={() => setEndRequested(false)} data-wb-assistant-end-return>返回</Button><Button variant="primary" loading={stopping} onClick={() => void endConversation()} data-wb-assistant-force-end>强制结束</Button></>}><p>当前对话正在进行，是否强制结束？强制结束将丢弃未应用的结果，不会修改原代码和当前图片。</p></Dialog>}{props.open === false && <div className="wb-assistant-notification" data-wb-assistant-notification role="status"><span><strong>{lastTurn ? lastTurn.status === 'done' ? 'Codex 已完成' : STATUS[lastTurn.status] : 'Codex 对话'}</strong>{props.targetLabel && <small>{props.targetLabel}</small>}</span><Button variant="secondary" onClick={props.onReopen}>查看对话</Button>{props.onReturn && <Button onClick={props.onReturn}>{sessionId ? '打开原图' : '返回模板'}</Button>}</div>}</>
 }

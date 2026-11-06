@@ -9,6 +9,7 @@
  *   ⑥ 错误按 code 给下一步，不只显示退出码；⑦ 没有回滚这句话常驻。
  */
 import { act } from 'react'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -196,7 +197,7 @@ describe('能力与禁用原因', () => {
       user: [],
       busy: false,
     })
-    expect(text()).toContain(pk('disabled.noProject', { product: 'Tavotto' }))
+    expect(text()).toContain(pk('disabled.noProject', { product: PRODUCT_NAME }))
     expect(input().disabled).toBe(true)
     expect(byName(pk('install'))!.disabled).toBe(true)
     expect(document.querySelector('[data-packages-env]')).toBeNull()

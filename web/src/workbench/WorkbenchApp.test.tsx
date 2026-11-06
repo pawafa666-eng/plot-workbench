@@ -152,16 +152,8 @@ it('creates a project in an existing folder with an optional name', async () => 
 it('keeps local template upload and creation available without an online template entry', async () => {
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-nav-templates]')!.click())
   const library = document.querySelector('[data-wb-template-library]')!
-  const upload = library.querySelector<HTMLInputElement>('[data-wb-library-upload]')
-  expect(upload?.type).toBe('file')
-  expect(upload?.accept).toBe('.py')
   expect(library.querySelector('[data-wb-online-templates]')).toBeNull()
   expect(library.querySelectorAll('a[href]')).toHaveLength(0)
-  const uploadClick = vi.spyOn(upload!, 'click')
-  const uploadButton = library.querySelector<HTMLButtonElement>('[data-wb-library-upload-trigger]')
-  expect(uploadButton?.disabled).toBe(false)
-  await act(async () => uploadButton!.click())
-  expect(uploadClick).toHaveBeenCalledTimes(1)
   const create = library.querySelector<HTMLButtonElement>('[data-wb-template-create]')
   expect(create?.disabled).toBe(false)
   await act(async () => create!.click())

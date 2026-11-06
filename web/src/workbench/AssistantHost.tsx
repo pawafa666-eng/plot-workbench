@@ -7,6 +7,7 @@ export interface TemplateAssistantDraft {
   assistantKey: string
   name: string; scope: 'global' | 'project'; categoryId: string; projectId?: string
   outputs: FigureOutput[]; selectedStem: string; run: Run | null; savedFingerprint: string; outputFingerprint: string
+  dimensionsConfirmed?: boolean
 }
 export type AssistantSource = Omit<CodeAssistantProps, 'open' | 'onClose' | 'onReopen' | 'onReturn' | 'onDiscard' | 'targetAvailable'> & { templateDraft?: TemplateAssistantDraft }
 type Source = AssistantSource
@@ -29,7 +30,7 @@ export function useAssistantBinding(key: string, source: Source | null) {
   useEffect(() => {
     if (!host || !source) return
     host.sync(key, owner, source)
-  }, [host, key, owner, source?.code, source?.data, source?.schema, source?.contextKey, source?.sessionId, source?.patches, source?.previewKey, source?.targetLabel, source?.templateDraft?.assistantKey, source?.templateDraft?.name, source?.templateDraft?.scope, source?.templateDraft?.categoryId, source?.templateDraft?.projectId, source?.templateDraft?.outputs, source?.templateDraft?.selectedStem, source?.templateDraft?.run, source?.templateDraft?.savedFingerprint, source?.templateDraft?.outputFingerprint])
+  }, [host, key, owner, source?.code, source?.data, source?.schema, source?.contextKey, source?.sessionId, source?.patches, source?.previewKey, source?.targetLabel, source?.templateDraft?.assistantKey, source?.templateDraft?.name, source?.templateDraft?.scope, source?.templateDraft?.categoryId, source?.templateDraft?.projectId, source?.templateDraft?.outputs, source?.templateDraft?.selectedStem, source?.templateDraft?.run, source?.templateDraft?.savedFingerprint, source?.templateDraft?.outputFingerprint, source?.templateDraft?.dimensionsConfirmed])
   useEffect(() => () => { host?.detach(key, owner) }, [host, key, owner])
   return { host, launch: (returnTo: ReturnToSource) => { if (current.current) host?.launch(key, owner, current.current, returnTo) } }
 }

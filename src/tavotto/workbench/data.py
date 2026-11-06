@@ -381,6 +381,44 @@ def select_data(
     }
 
 
+def require_excel_data(snapshot):
+    """Check the declared input, without claiming Python actually consumed it."""
+    if snapshot is None:
+        raise ValueError("请先上传 Excel 并确认绘图数据选区")
+    _check_snapshot(snapshot)
+    if snapshot["row_count"] < 1 or snapshot["column_count"] < 1:
+        raise ValueError("绘图数据不能为空（行数不包含表头）")
+    filename = str((snapshot.get("source") or {}).get("filename", ""))
+    if Path(filename).suffix.lower() not in (".xlsx", ".xls"):
+        raise ValueError("模板数据必须来自外部导入的 Excel 文件")
+
+
+def workbook_bytes(snapshot):
+    """Materialize the exact selected values; child only, never Flask imports."""
+    from openpyxl import Workbook
+
+    _check_snapshot(snapshot)
+    if not 1 <= snapshot["row_count"] <= 1_048_575 or not 1 <= snapshot["column_count"] <= 16_384:
+        raise ValueError("选区尺寸超出 Excel 范围或为空")
+    book = Workbook(write_only=True)
+    sheet = book.create_sheet("Data")
+    from openpyxl.cell import WriteOnlyCell
+
+    for row in [snapshot["columns"], *snapshot["values"]]:
+        cells = []
+        for encoded in row:
+            value = None if _missing(encoded) else _decode_cell(encoded)
+            cell = WriteOnlyCell(sheet, value=value)
+            # Literal Excel strings (including '=...') remain data, not formulas.
+            if isinstance(value, str):
+                cell.data_type = "s"
+            cells.append(cell)
+        sheet.append(cells)
+    output = io.BytesIO()
+    book.save(output)
+    return output.getvalue()
+
+
 def _check_snapshot(snapshot: dict[str, Any]) -> None:
     if not isinstance(snapshot, dict):
         raise ValueError("Snapshot must be an object")
@@ -638,8 +676,8 @@ def validate_schema(
 ) -> list[dict[str, Any]]:
     """Return data mismatch issues, or [] when valid; malformed schemas raise.
 
-    Each of ``rows`` and ``columns`` is optional and is either
-    ``{mode: 'fixed', value: N}`` or ``{mode: 'variable', min: N}`` (N >= 0).
+    Each axis is optional: fixed/value, variable/min (legacy N >= 0),
+    maximum/max, or any. Maximum and any require nonempty input.
     ``column_roles`` entries accept a one-based ``index`` or exact column
     ``name`` and ``dtype`` = any/numeric/text. When index is present, name is a
     descriptive role label. Missing/blank cells are allowed. Numeric text must
@@ -655,23 +693,46 @@ def validate_schema(
         rule = schema.get(axis)
         if rule is None:
             continue
-        if not isinstance(rule, dict) or rule.get("mode") not in ("fixed", "variable"):
+        if not isinstance(rule, dict) or rule.get("mode") not in (
+            "fixed",
+            "variable",
+            "maximum",
+            "any",
+        ):
             raise ValueError(f"Invalid {axis} schema mode")
+        if rule["mode"] == "any":
+            if snapshot[total_key] < 1:
+                issues.append(
+                    {
+                        "code": total_key + "_mismatch",
+                        "axis": axis,
+                        "message": f"{axis}: 数据不能为空",
+                    }
+                )
+            continue
         fixed = rule["mode"] == "fixed"
-        expected = rule.get("value" if fixed else "min")
+        maximum = rule["mode"] == "maximum"
+        expected = rule.get("value" if fixed else "max" if maximum else "min")
         if type(expected) is not int or expected < 0:
             raise ValueError(
-                f"{axis} schema requires a nonnegative integer {'value' if fixed else 'min'}"
+                f"{axis} schema requires a nonnegative integer {'value' if fixed else 'max' if maximum else 'min'}"
             )
         actual = snapshot[total_key]
-        if actual != expected if fixed else actual < expected:
+        mismatch = (
+            actual != expected
+            if fixed
+            else actual > expected or actual < 1
+            if maximum
+            else actual < expected
+        )
+        if mismatch:
             issues.append(
                 {
                     "code": total_key + "_mismatch",
                     "axis": axis,
                     "expected": expected,
                     "actual": actual,
-                    "message": f"{axis}: expected {'exactly' if fixed else 'at least'} {expected}, got {actual}",
+                    "message": f"{'行数' if axis == 'rows' else '列数'}：要求{'恰好' if fixed else '至多' if maximum else '至少'} {expected}，实际 {actual}",
                 }
             )
     roles = schema.get("column_roles", [])

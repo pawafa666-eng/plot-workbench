@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
 import platform
@@ -42,12 +44,29 @@ def run(directory):
             result = data_module.transform_data(
                 context["data"], context["transform"], context.get("i"), context.get("j")
             )
+        elif operation == "workbook":
+            result = {
+                "base64": base64.b64encode(data_module.workbook_bytes(context["data"])).decode(
+                    "ascii"
+                )
+            }
         else:
             raise ValueError("Unknown table operation")
         (directory / "result.json").write_text(
             json.dumps(result, ensure_ascii=False, allow_nan=False), "utf-8"
         )
         return
+    excel = (context.get("schema") or {}).get("input_format") == "excel"
+    if excel:
+        data_module.require_excel_data(context.get("data"))
+        input_root = directory / "inputs"
+        input_root.mkdir(exist_ok=True)
+        (input_root / "data.xlsx").write_bytes(data_module.workbook_bytes(context["data"]))
+        (input_root / "source.py").write_text((directory / "base.py").read_text("utf-8"), "utf-8")
+        context["working_directory"] = str(input_root)
+        context["original_path"] = str(input_root / "source.py")
+        # Adapter and safe worker receive the same isolated input directory.
+        (directory / "input.json").write_text(json.dumps(context, ensure_ascii=False), "utf-8")
     import matplotlib
 
     matplotlib.use("Agg")
@@ -100,7 +119,18 @@ def run(directory):
     # Persist observed project inputs, not the original workbook's future state.
     # The engine observation reports its known blind channels explicitly.
     inputs = worker._inputs_report or {}
-    input_files = []
+    input_files = (
+        [
+            {
+                "path": "data.xlsx",
+                "sha256": hashlib.sha256(
+                    (directory / "inputs" / "data.xlsx").read_bytes()
+                ).hexdigest(),
+            }
+        ]
+        if excel
+        else []
+    )
     project_root = Path(context.get("working_directory") or directory).resolve()
     (directory / "inputs").mkdir(exist_ok=True)
     for item in inputs.get("files", []) + inputs.get("local_modules", []):

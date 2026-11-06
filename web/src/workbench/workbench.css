@@ -152,3 +152,30 @@
   .wb-project-home .wb-project-card-preview { height:115px; }
   .wb-app[data-density="compact"] .wb-main-content { padding:14px; }
 }
+
+/* Paired template inputs use the existing workbench controls and palette. */
+.wb-template-files { border:1px dashed #c4d3bc; border-radius:16px; background:#fff; padding:16px; margin:12px 0; }
+.wb-template-files.is-dragging { border-color:#58a500; background:#f3fbe9; }
+.wb-template-upload-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.wb-template-upload-heading p { margin:4px 0 0; color:var(--wb-muted,#697369); font-size:13px; }
+.wb-uploaded-files { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }
+.wb-uploaded-file { display:flex; align-items:center; gap:10px; min-width:0; padding:12px; border:1px solid #e1e6dd; border-radius:12px; }
+.wb-uploaded-file>div:first-of-type { flex:1; min-width:0; }
+.wb-uploaded-file strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+.wb-uploaded-file small { display:block; color:#6e766b; font-size:12px; margin-top:3px; }
+.wb-file-app-icon { flex:none; display:flex; align-items:center; gap:3px; border-radius:8px; padding:8px; background:#eaf2fc; color:#3275ad; }
+.wb-file-app-icon.is-excel { background:#e5f3e9; color:#217346; }
+.wb-file-app-icon small { color:inherit; font-weight:800; }
+[data-dialog="workbench-code-assistant"][data-floating] { border:1px solid #d5dfce; max-width:calc(100vw - 16px); box-shadow:0 16px 60px #1b2e2530; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-options { flex-wrap:wrap; }
+@media(max-width:760px) { .wb-uploaded-files { grid-template-columns:1fr; } .wb-template-upload-heading { flex-wrap:wrap; } }
+
+.wb-uploaded-title { margin:14px 0 0; font-size:12px; color:#6e766b; font-weight:600; }
+.wb-template-input-hint { margin:12px 0 0; }
+.wb-uploaded-file>.wb-toolbar { flex-wrap:wrap; justify-content:flex-end; gap:4px; }
+.wb-uploaded-file>.wb-toolbar button { font-size:12px; padding:4px 6px; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-title { min-width:0; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-context { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-options>label { width:180px; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-options>button { flex:none; }
+[data-dialog="workbench-code-assistant"] .wb-assistant-toolbar { flex-wrap:wrap; }

@@ -14,6 +14,7 @@ import tempfile
 import uuid
 import zipfile
 import zlib
+from pathlib import Path
 
 from tavotto.engine import atomicio
 
@@ -69,7 +70,13 @@ def _snapshot(value):
     if value is None:
         return None
     table_data.validate_schema(value, None)
-    return {**copy.deepcopy(value), "source": {"kind": "shared_template"}}
+    source = {"kind": "shared_template"}
+    if Path(str((value.get("source") or {}).get("filename", ""))).suffix.lower() in (
+        ".xlsx",
+        ".xls",
+    ):
+        source.update(filename="data.xlsx", format="xlsx")
+    return {**copy.deepcopy(value), "source": source}
 
 
 def _ids(value):

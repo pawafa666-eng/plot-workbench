@@ -58,10 +58,8 @@ def name_of(value):
 
 DEFAULT_CODE = """import matplotlib.pyplot as plt
 
-if "data" in globals() and data is not None:
-    x, y = data.iloc[:, 0], data.iloc[:, 1]
-else:
-    x, y = [1, 2, 3, 4, 5], [2, 4, 3, 6, 7]
+# 绘图数据来自用户导入的表格，不使用内置数据回退。
+x, y = data.iloc[:, 0], data.iloc[:, 1]
 
 fig, ax = plt.subplots(figsize=(5, 3.5))
 ax.plot(x, y, "o-", color="#29465b")
@@ -96,6 +94,9 @@ def copy_artifacts(artifacts, target, outputs=()):
             shutil.copy2(source, target / filename)
     if (source_root / "inputs").is_dir():
         shutil.copytree(source_root / "inputs", target / "inputs")
+        workbook = source_root / "inputs" / "data.xlsx"
+        if workbook.is_file():
+            shutil.copy2(workbook, target / "data.xlsx")
 
 
 def output_previews(record, kind):

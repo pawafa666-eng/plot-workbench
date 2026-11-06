@@ -147,6 +147,8 @@ class RenderService:
         if len(payload["code"].encode("utf-8")) > 2_000_000:
             raise WorkbenchError("代码文件超过 2 MB")
         schema = payload.get("schema") or {}
+        if schema.get("input_format") == "excel":
+            data_module.require_excel_data(payload.get("data"))
         if payload.get("data") is not None:
             issues = data_module.validate_schema(payload["data"], schema)
             if issues:

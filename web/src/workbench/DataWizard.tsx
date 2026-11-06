@@ -25,9 +25,9 @@ export function DataTable({ data, caption = '数据预览' }: { data: Snapshot |
       <tbody>{data.values.slice(0, 50).map((row, i) => <tr key={i}><th className="wb-row-number">{data.row_sources?.[i] ?? i + 1}</th>{row.slice(0, 50).map((v, j) => <td key={j} title={cellText(v)}>{cellText(v)}</td>)}</tr>)}</tbody></table></div>
   </section>
 }
-export function DataWizard({ onClose, onImport }: { onClose: () => void; onImport: (data: Snapshot) => void }) {
+export function DataWizard({ onClose, onImport, initialFile = null, excelOnly = false }: { initialFile?: File | null; excelOnly?: boolean; onClose: () => void; onImport: (data: Snapshot) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const [file, setFile] = useState<File | null>(initialFile)
   const [sheet, setSheet] = useState('')
   const [encoding, setEncoding] = useState('utf-8')
   const [delimiter, setDelimiter] = useState(',')
@@ -37,11 +37,12 @@ export function DataWizard({ onClose, onImport }: { onClose: () => void; onImpor
   const [selected, setSelected] = useState<Snapshot | null>(null)
   const [rows, setRows] = useState<Range[]>([{ start: 0, end: 0 }])
   const [columns, setColumns] = useState<Range[]>([{ start: 0, end: 0 }])
-  const [header, setHeader] = useState(false)
+  const [header, setHeader] = useState(excelOnly)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     if (!file) return
+    if (excelOnly && !/\.(xlsx|xls)$/i.test(file.name)) { setError('请选择 Excel 文件。'); return }
     let active = true
     setSelected(null); setTableId(''); setBusy(true); setError('')
     const form = new FormData(); form.set('file', file); form.set('encoding', encoding); form.set('delimiter', delimiter)
@@ -52,7 +53,7 @@ export function DataWizard({ onClose, onImport }: { onClose: () => void; onImpor
       setRaw({ ...r.preview, row_count: r.row_count, column_count: r.column_count })
     }).catch((e) => { if (active) setError(errorText(e)) }).finally(() => { if (active) setBusy(false) })
     return () => { active = false }
-  }, [file, sheet, encoding, delimiter])
+  }, [file, sheet, encoding, delimiter, excelOnly])
   useEffect(() => {
     if (!tableId || !raw) return
     let active = true
@@ -68,11 +69,11 @@ export function DataWizard({ onClose, onImport }: { onClose: () => void; onImpor
     return () => { active = false; clearTimeout(timer) }
   }, [tableId, raw, rows, columns, header])
   const isCsv = file ? /\.csv$/i.test(file.name) : false
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }} title="导入表格数据" description="Excel / CSV · 独立选择行列范围" width={1120} height="720px" chrome="shell" anchor="workbench-data-import" footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={!selected || busy || !!error} data-wb-import-confirm onClick={() => { if (selected) onImport(selected) }}>导入所选数据</Button></>}>
+  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }} title="导入表格数据" description={excelOnly ? '选择工作表及行列；选区将生成为独立 data.xlsx，表头不计入行数。' : 'Excel / CSV · 独立选择行列范围'} width={1120} height="720px" chrome="shell" anchor="workbench-data-import" footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={!selected || !selected.row_count || !selected.column_count || busy || !!error} data-wb-import-confirm onClick={() => { if (selected) onImport(selected) }}>导入所选数据</Button></>}>
     <div className="wb-data-wizard">
       <aside className="wb-data-settings">
-        <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" hidden data-wb-data-file onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSheet(''); setRows([{ start: 0, end: 0 }]); setColumns([{ start: 0, end: 0 }]) }} />
-        <Button variant="secondary" className="wb-wide" onClick={() => inputRef.current?.click()}><Upload />选择 Excel / CSV</Button>
+        <input ref={inputRef} type="file" accept={excelOnly ? '.xlsx,.xls' : '.xlsx,.xls,.csv'} hidden data-wb-data-file onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSheet(''); setRows([{ start: 0, end: 0 }]); setColumns([{ start: 0, end: 0 }]) }} />
+        <Button variant="secondary" className="wb-wide" onClick={() => inputRef.current?.click()}><Upload />{excelOnly ? '选择 Excel' : '选择 Excel / CSV'}</Button>
         {file && <p className="wb-filename">{file.name}</p>}
         {sheets.length > 0 && <label className="wb-field">工作表<Select ariaLabel="工作表" value={sheet || sheets[0]} onChange={setSheet} options={sheets.map((s) => ({ value: s, label: s }))} /></label>}
         {isCsv && <><label className="wb-field">文件编码<Select ariaLabel="文件编码" value={encoding} onChange={setEncoding} options={[{ value: 'utf-8', label: 'UTF-8' }, { value: 'gb18030', label: 'GB18030 / GBK' }, { value: 'utf-16', label: 'UTF-16' }]} /></label><label className="wb-field">分隔符<Select ariaLabel="分隔符" value={delimiter} onChange={setDelimiter} options={[{ value: ',', label: '逗号 ,' }, { value: '\t', label: '制表符 Tab' }, { value: ';', label: '分号 ;' }, { value: '|', label: '竖线 |' }]} /></label></>}
@@ -87,8 +88,8 @@ export function DataWizard({ onClose, onImport }: { onClose: () => void; onImpor
 }
 function RangeEditor({ title, value, onChange }: { title: string; value: Range[]; onChange: (ranges: Range[]) => void }) {
   return <section className="wb-range-group"><div className="wb-section-heading"><strong>{title}</strong><IconButton label={`添加${title}`} tip={false} onClick={() => onChange([...value, { start: 1, end: 1 }])}><Plus /></IconButton></div>{value.map((range, index) => <div className="wb-range-row" key={index}>
-    <TextInput type="number" min={0} aria-label={`${title}${index + 1}起始`} value={range.start} onChange={(e) => onChange(value.map((v, i) => i === index ? { ...v, start: Number(e.target.value) } : v))} />
-    <span className="wb-muted">至</span><TextInput type="number" min={0} aria-label={`${title}${index + 1}结束`} value={range.end} onChange={(e) => onChange(value.map((v, i) => i === index ? { ...v, end: Number(e.target.value) } : v))} />
+    <TextInput type="number" min={0} aria-label={`${title}${index + 1}起始`} data-wb-range-start={`${title === '行范围' ? 'rows' : 'columns'}-${index}`} value={range.start} onChange={(e) => onChange(value.map((v, i) => i === index ? { ...v, start: Number(e.target.value) } : v))} />
+    <span className="wb-muted">至</span><TextInput type="number" min={0} aria-label={`${title}${index + 1}结束`} data-wb-range-end={`${title === '行范围' ? 'rows' : 'columns'}-${index}`} value={range.end} onChange={(e) => onChange(value.map((v, i) => i === index ? { ...v, end: Number(e.target.value) } : v))} />
     <IconButton label={`删除${title}${index + 1}`} tip={false} disabled={value.length === 1} onClick={() => onChange(value.filter((_, i) => i !== index))}><Trash2 /></IconButton>
   </div>)}</section>
 }

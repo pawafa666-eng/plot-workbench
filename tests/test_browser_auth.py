@@ -125,6 +125,8 @@ def test_write_endpoints_default_deny(served):
         "/api/export",
         "/api/workbench/library/export",
         "/api/workbench/library/import",
+        "/api/workbench/trash/delete",
+        "/api/workbench/plots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/export-image",
         "/api/workbench/storage/inspect",
         "/api/workbench/drafts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/restore",
         "/api/workbench/plots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/draft-session",

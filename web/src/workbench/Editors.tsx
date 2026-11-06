@@ -1,3 +1,5 @@
+import { saveBrowserExport } from './browserExport'
+import { ExportDestination } from './ExportDestination'
 import type { PanelOverride } from '@/types/document'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
@@ -9,7 +11,7 @@ import { BookOpen, ChevronDown, ChevronRight, Download, FileCodeCorner, Play, Sa
 import { isDesktop, pickDirectory, pickScriptFile } from '@/lib/desktop'
 import { newId } from '@/lib/id'
 import { DataTable, DataTransform, DataWizard } from './DataWizard'
-import { api, download, errorText, figureOutputs, patch, post, STARTER_CODE, type Category, type FigureOutput, type Job, type Plot, type Run, type Snapshot, type Template } from './api'
+import { api, download, exportBlob, errorText, figureOutputs, patch, post, STARTER_CODE, type Category, type FigureOutput, type Job, type Plot, type Run, type Snapshot, type Template } from './api'
 import { canCommitRun, DEFAULT_SCHEMA, fingerprintOf, schemaSummary, type Schema } from './model'
 import { TavottoEditor, type TavottoSession } from './TavottoEditor'
 import { useRenderJob } from './useRenderJob'
@@ -19,6 +21,7 @@ import { DraftStatus, useEditorDraft, useWorkspace, type EditorDraft } from './R
 import { HistoryButton } from './HistoryPanel'
 import { TemplateFiles } from './TemplateFiles'
 import { DimensionsDialog } from './DimensionsDialog'
+import { CopyButton } from '@/components/ui/CopyButton'
 
 export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChange, resumeSession, resumePatches, onReturnAssistant, onNavigationGuard, restoredDraft, onRestoreCopy }: { restoredDraft?: EditorDraft; onRestoreCopy?: (value: Plot | Template) => void; initial: Plot; templates: Template[]; onChanged: (plot: Plot) => void; onBack: () => void; onDirtyChange?: (dirty: boolean) => void; resumeSession?: TavottoSession; resumePatches?: PanelOverride[]; onReturnAssistant?: (source: AssistantSource) => void | Promise<void>; onNavigationGuard?: (guard: (() => boolean) | null) => void }) {
   const workspace = useWorkspace()
@@ -119,23 +122,23 @@ export function PlotEditor({ initial, templates, onChanged, onBack, onDirtyChang
     if (!file) return
     void file.text().then((text) => {
       setCode(text.replace(/^\uFEFF/, '')); setOriginalPath(''); setTemplateId(undefined); setCodeOpen(true)
-      setMessage(`已导入 ${file.name}。运行并保存后可导出代码包。`)
+      setMessage(`已导入 ${file.name}。浏览器未提供原文件路径；请同时导入 Excel，代码读取同级 data.xlsx。`)
     }).catch((e) => setError(errorText(e)))
   }
   if (session) return <TavottoEditor draftTarget={plot} restoredDraft={pendingCanvas ?? undefined} session={session} resumePatches={resumePatches} targetLabel={`${plot.name} · ${session.stem}`} data={data} schema={schema} onNavigationGuard={onNavigationGuard} onReturnAssistant={onReturnAssistant} onFinish={(next) => { setPendingCanvas(null); acceptPlot(next) }} onCancel={() => { setSession(null); setPendingCanvas(null) }} />
   return <div className="wb-plot-editor" data-wb-plot-editor>
     <div className="wb-page-heading"><div><h1>{plot.name}</h1><p>{locked ? '已进入图内编辑流程 · 代码、数据和模板只读' : '运行 Python 代码后保存结果。'}</p></div><div className="wb-toolbar"><Button onClick={async () => { try { await draft.flush(); onBack() } catch (e) { setError(errorText(e)) } }}>返回项目</Button><HistoryButton kind="plot" entity={plot} onRestored={(value) => onRestoreCopy?.(value)} /><Button variant="secondary" disabled={(!saved && !(pendingValidation && locked) && !pendingCanvas) || saving || jobs.busy} title={!saved && !pendingValidation && !pendingCanvas ? '请先运行并保存当前图' : undefined} onClick={openTavotto} data-wb-open-tavotto>{pendingCanvas ? '运行并恢复图内草稿' : pendingValidation && locked ? '验证历史副本' : '图内编辑'}</Button><Button variant="primary" disabled={!saved || saving} title={!saved ? '请先运行验证并保存当前结果' : undefined} onClick={() => setExportOpen(true)} data-wb-export><Download />导出</Button></div></div>
-    <div className="wb-editor-bar"><div className="wb-toolbar"><input ref={codeFileRef} hidden type="file" accept=".py" data-wb-plot-code-upload onChange={(e) => { acceptCodeFile(e.target.files?.[0]); e.currentTarget.value = '' }} /><Button active={codeOpen} onClick={() => setCodeOpen(!codeOpen)} data-wb-code-toggle>{codeOpen ? <ChevronDown /> : <ChevronRight />}<FileCodeCorner />Python 代码</Button><Button disabled={locked || jobs.busy} onClick={() => void importCode()}><Upload />导入代码</Button><Button disabled={locked || jobs.busy} onClick={() => setImportOpen(true)}><Upload />导入数据</Button><Button active={dataOpen} disabled={!data} onClick={() => setDataOpen(!dataOpen)}>数据 {data ? `${data.row_count} × ${data.column_count}` : ''}</Button><Button data-wb-template-picker-open disabled={locked || jobs.busy || !data} title={!data ? '请先导入 Excel 并确认数据选区' : undefined} onClick={() => setPickerOpen(true)}><BookOpen />选择模板</Button></div><div className="wb-toolbar"><span className={`wb-status-dot ${dirty ? 'is-dirty' : ''}`}>{jobs.busy ? '正在运行' : pendingValidation ? '历史副本待验证' : current && dirty ? '已运行 · 待保存' : dirty ? '有未运行修改' : saved ? '已保存' : '等待首次运行'}</span>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" disabled={locked || saving} onClick={render} data-wb-run><Play />运行</Button>}<Button variant="primary" disabled={!current || saving || locked} title={locked ? '请在图内编辑中完成并保存' : !current ? '请先运行当前代码和数据' : undefined} loading={saving} onClick={save} data-wb-save><Save />保存</Button></div></div>
+    <div className="wb-editor-bar"><div className="wb-toolbar"><input ref={codeFileRef} hidden type="file" accept=".py" data-wb-plot-code-upload onChange={(e) => { acceptCodeFile(e.target.files?.[0]); e.currentTarget.value = '' }} /><Button active={codeOpen} onClick={() => setCodeOpen(!codeOpen)} data-wb-code-toggle>{codeOpen ? <ChevronDown /> : <ChevronRight />}<FileCodeCorner />Python 代码</Button><Button data-wb-import-code disabled={locked || jobs.busy} onClick={() => void importCode()}><Upload />导入代码</Button><Button data-wb-import-data disabled={locked || jobs.busy} onClick={() => setImportOpen(true)}><Upload />导入数据</Button><Button active={dataOpen} disabled={!data} onClick={() => setDataOpen(!dataOpen)}>数据 {data ? `${data.row_count} × ${data.column_count}` : ''}</Button><Button data-wb-template-picker-open disabled={locked || jobs.busy || !data} title={!data ? '请先导入 Excel 并确认数据选区' : undefined} onClick={() => setPickerOpen(true)}><BookOpen />选择模板</Button></div><div className="wb-toolbar"><span className={`wb-status-dot ${dirty ? 'is-dirty' : ''}`}>{jobs.busy ? '正在运行' : pendingValidation ? '历史副本待验证' : current && dirty ? '已运行 · 待保存' : dirty ? '有未运行修改' : saved ? '已保存' : '等待首次运行'}</span>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button variant="secondary" disabled={locked || saving} onClick={render} data-wb-run><Play />运行</Button>}<Button variant="primary" disabled={!current || saving || locked} title={locked ? '请在图内编辑中完成并保存' : !current ? '请先运行当前代码和数据' : undefined} loading={saving} onClick={save} data-wb-save><Save />保存</Button></div></div>
     <div className="wb-editor-state-row"><DraftStatus draft={draft} />{restoredDraft && <span className="wb-muted">已载入恢复草稿；尚未自动运行。</span>}</div>
-    {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} />}
+    {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} context={jobs.job?.execution_context} />}
     {message && !error && !jobs.error && <div className="wb-notice" role="status">{message}</div>}
     {locked && <div className="wb-lock-notice">此图已完成图内编辑写回。请使用「图内编辑」调整图中元素。</div>}
     <div className={`wb-figure-workspace ${codeOpen ? 'has-code' : ''}`}>
-      {codeOpen && <CodePane code={code} onChange={setCode} readOnly={locked || jobs.busy} />}
+      {codeOpen && <CodePane code={locked ? plot.base_code ?? code : code} onChange={setCode} readOnly={locked || jobs.busy} />}
       <FigurePreview outputs={outputs} selectedStem={stem} onSelect={setSelectedStem} stale={!!preview && !current && dirty} unverified={pendingValidation && !current} busy={jobs.busy} />
     </div>
     {dataOpen && data && <div className="wb-data-drawer"><DataTransform data={data} disabled={locked || jobs.busy} onChange={setData} /><DataTable data={data} />{schema.input_format === 'excel' && <Button onClick={() => void download('/data/workbook', 'data.xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data }) }).catch((e) => setError(errorText(e)))}><Download />导出本次绘图数据</Button>}</div>}
-    {importOpen && <DataWizard excelOnly onClose={() => setImportOpen(false)} onImport={(next) => { setData(next); setDataOpen(true); setImportOpen(false); setMessage('数据已导入，请重新运行。') }} />}
+    {importOpen && <DataWizard excelOnly onClose={() => setImportOpen(false)} onImport={(next) => { setData(next); setSchema((old) => ({ ...old, input_format: 'excel' })); setDataOpen(true); setImportOpen(false); setMessage('数据已导入，请重新运行。') }} />}
     {pickerOpen && <Dialog open title="选择绘图模板" description="使用已导入的 Excel 选区，仅显示尺寸和列类型兼容的模板。" onOpenChange={setPickerOpen} width={900} anchor="workbench-template-picker"><div className="wb-template-picker">{compatible.map((template) => <TemplateChoice key={template.id} template={template} onClick={() => { setCode(template.code); setSchema({ ...template.schema, input_format: 'excel' }); setTemplateId(template.id); setOriginalPath(''); setPickerOpen(false); setCodeOpen(true) }} />)}{compatible.length === 0 && <p className="wb-empty-inline">{checkingTemplates ? '正在检查模板兼容性…' : '暂无兼容模板，可在模板库调整数据规范。'}</p>}</div></Dialog>}
     {exportOpen && <ExportDialog plot={plot} stem={stem} hasOriginalPath={!!plot.source?.original_path} onClose={() => setExportOpen(false)} />}
   </div>
@@ -231,7 +234,7 @@ export function TemplateEditor({ initial, categories, projectId, defaultScope = 
     <div className="wb-editor-bar"><div className="wb-toolbar"><Button active={codeOpen} data-wb-code-toggle onClick={() => setCodeOpen(!codeOpen)}><FileCodeCorner />Python 代码</Button><Button variant="secondary" disabled={jobs.busy} onClick={() => { if (assistant.host && onReturnAssistant) assistant.launch(onReturnAssistant); else { setAssistantStarted(true); setAssistantOpen(true) } }} data-wb-template-assistant><FileCodeCorner />Codex 助手</Button><Button disabled={!data} active={dataOpen} onClick={() => setDataOpen(!dataOpen)}>查看数据{data ? ` ${data.row_count} × ${data.column_count}` : ''}</Button></div>{jobs.busy ? <Button variant="secondary" onClick={jobs.cancel}>取消运行</Button> : <Button disabled={!data || !schema.code_filename || !code.trim()} title={!data || !schema.code_filename ? '请先上传代码与 Excel' : undefined} variant="secondary" data-wb-template-validate onClick={validate} data-wb-template-run><Play />运行并验证</Button>}</div>
     <TemplateFiles codeName={schema.code_filename} data={data} disabled={jobs.busy} onCode={(text, filename) => { setCode(text); setSchema((s) => ({ ...s, code_filename: filename })); if (!initial?.id) setName(filename.replace(/\.py$/i, '')); setRun(null); setDimensionsConfirmed(false) }} onExcel={(file) => { setImportFile(file); setImportOpen(true) }} onRemoveCode={() => { setCode(''); setSchema((s) => ({ ...s, code_filename: undefined })); setRun(null); setDimensionsConfirmed(false) }} onRemoveData={() => changeData(null)} />
     <div className="wb-editor-state-row"><span data-wb-template-state>{jobs.busy ? '正在运行' : valid && dirty ? '已运行 · 待保存' : dirty ? '有未运行修改' : pendingValidation ? '待运行验证' : '已保存'}</span><DraftStatus draft={draft} /></div>
-    {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} />}
+    {(error || jobs.error) && <ErrorPanel error={error || jobs.error} traceback={jobs.job?.traceback} context={jobs.job?.execution_context} />}
     <div className={`wb-figure-workspace ${codeOpen ? 'has-code' : ''}`}>{codeOpen && <CodePane code={code} onChange={(value) => { setCode(value); setSchema((s) => ({ ...s, code_filename: s.code_filename ?? 'source.py' })); setDimensionsConfirmed(false) }} readOnly={jobs.busy} />}<FigurePreview outputs={outputs} selectedStem={selectedOutput?.stem ?? 'figure'} onSelect={setSelectedStem} stale={!!preview && contentChanged && !valid} unverified={pendingValidation && !valid} busy={jobs.busy} /></div>
     {dataOpen && data && <div className="wb-data-drawer"><DataTransform data={data} onChange={changeData} disabled={jobs.busy} /><DataTable data={data} /><Button onClick={() => void download('/data/workbook', 'data.xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data }) }).catch((e) => setError(errorText(e)))}><Download />导出本次绘图数据</Button></div>}
     {importOpen && <DataWizard initialFile={importFile} excelOnly onClose={() => setImportOpen(false)} onImport={(next) => { changeData(next); setDataOpen(true); setImportOpen(false) }} />}
@@ -253,7 +256,7 @@ async function renderTemplateComparison(code: string, data: Snapshot | null, sch
 }
 function CodePane({ code, onChange, readOnly }: { code: string; onChange: (code: string) => void; readOnly?: boolean }) {
   const lines = code.split('\n').length
-  return <section className="wb-code-pane"><div className="wb-pane-heading"><span>Python</span><span>{readOnly ? '只读' : '可编辑'} · {lines} 行</span></div><textarea aria-label="Python 代码" spellCheck={false} value={code} readOnly={readOnly} data-wb-code onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => {
+  return <section className="wb-code-pane"><div className="wb-pane-heading"><span>Python</span><CopyButton appearance="icon" label="复制代码" text={code} /><span>{readOnly ? '只读' : '可编辑'} · {lines} 行</span></div><textarea aria-label="Python 代码" spellCheck={false} value={code} readOnly={readOnly} data-wb-code onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => {
     if (e.key === 'Tab' && !readOnly) { e.preventDefault(); const el = e.currentTarget; const start = el.selectionStart; const end = el.selectionEnd; onChange(code.slice(0, start) + '    ' + code.slice(end)); requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = start + 4 }) }
   }} /><div className="wb-code-hint">绘图数据来自 Excel；模板代码可读取同级 data.xlsx 或使用 data 表格</div></section>
 }
@@ -267,25 +270,40 @@ function FigurePreview({ outputs, selectedStem, onSelect, stale, busy, unverifie
 export function TemplateChoice({ template, onClick }: { template: Template; onClick: () => void }) {
   return <Button className="wb-template-choice" onClick={onClick}><div className="wb-choice-preview">{template.preview_url ? <img src={template.preview_url} alt="" /> : <BookOpen />}</div><strong>{template.name}</strong><span className="wb-muted">{schemaSummary(template.schema)}</span></Button>
 }
-function ErrorPanel({ error, traceback }: { error: string; traceback?: string }) {
+function ErrorPanel({ error, traceback, context }: { error: string; traceback?: string; context?: Job['execution_context'] }) {
   const [expanded, setExpanded] = useState(false)
-  return <div className="wb-error" role="alert"><div className="wb-toolbar"><strong>运行未完成</strong><span>{error}</span>{traceback && <Button onClick={() => setExpanded(!expanded)}>{expanded ? '收起详情' : '查看详情'}</Button>}</div>{expanded && <pre>{traceback}</pre>}</div>
+  const [copyError, setCopyError] = useState('')
+  const diagnostics = [error, context ? `代码来源：${context.source_path || '编辑器代码（未关联源文件）'}\n运行目录：${context.working_directory}\n输入模式：${context.mode === 'excel' ? 'Excel 选区与代码的同级输入副本（data.xlsx）' : context.mode === 'script' ? '原脚本目录' : '项目目录'}` : '', traceback].filter(Boolean).join('\n\n')
+  return <section className="wb-error wb-error-panel" role="alert" data-wb-error><div className="wb-toolbar"><strong>运行未完成</strong><span>{error}</span><CopyButton label="复制完整错误" text={diagnostics} variant="secondary" onError={(e) => setCopyError(errorText(e))} />{traceback && <Button onClick={() => setExpanded(!expanded)} data-wb-error-details>{expanded ? '收起详情' : '查看详情'}</Button>}</div>{context && <p className="wb-error-context">{context.mode === 'excel' ? '本次使用已导入的 Excel 选区，运行目录内提供 data.xlsx。' : context.source_path ? `相对路径以原脚本目录为准：${context.working_directory}` : `本次未关联原脚本路径，相对路径以项目目录为准：${context.working_directory}。请导入 Excel，或通过“导入代码”选择原文件。`}</p>}{copyError && <p role="status">{copyError}</p>}{expanded && <pre data-wb-error-traceback>{traceback}</pre>}</section>
 }
 function ExportDialog({ plot, stem, hasOriginalPath, onClose }: { plot: Plot; stem: string; hasOriginalPath: boolean; onClose: () => void }) {
-  const [directory, setDirectory] = useState(() => plot.export_directory ?? localStorage.getItem('workbench.exportDirectory') ?? '')
+  const [directory, setDirectory] = useState(() => localStorage.getItem('workbench.exportDirectory') ?? '')
+  const [filename, setFilename] = useState(() => `${plot.name.replace(/[<>:"/\\|?*]/g, '_')}${stem === 'figure' ? '' : `-${stem}`}`)
+  const [browserDirectory, setBrowserDirectory] = useState<FileSystemDirectoryHandle | null>(null)
+  const [exporting, setExporting] = useState(false)
   const [replace, setReplace] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   async function exportImage(format: string) {
-    setError('')
+    if (exporting) return
+    setError(''); setMessage(''); setExporting(true)
     try {
-      if (isDesktop()) { const result = await post<{ path: string }>(`/plots/${plot.id}/export-image`, { format, stem }); setMessage(`已保存：${result.path}`) }
-      else { await download(`/plots/${plot.id}/export?format=${format}&stem=${encodeURIComponent(stem)}`, `${plot.name}${stem === 'figure' ? '' : `-${stem}`}.${format}`); setMessage(`${format.toUpperCase()} 已导出。`) }
-    }
-    catch (e) { setError(errorText(e)) }
+      if (browserDirectory) {
+        const blob = await exportBlob(`/plots/${plot.id}/export?format=${format}&stem=${encodeURIComponent(stem)}&revision=${plot.revision}`)
+        const path = await saveBrowserExport(browserDirectory, `${filename}.${format}`, blob)
+        setMessage(`已导出当前已保存版本 r${plot.revision}：${path}`); return
+      }
+      const chosen = directory || (isDesktop() ? await pickDirectory('选择图形导出目录') : '')
+      if (!chosen) { setError('请选择或输入图形导出目录。'); return }
+      setDirectory(chosen)
+      const result = await post<{ path: string; revision: number }>(`/plots/${plot.id}/export-image`, { format, stem, directory: chosen, filename: `${filename}.${format}`, revision: plot.revision })
+      localStorage.setItem('workbench.exportDirectory', chosen)
+      setMessage(`已导出当前已保存版本 r${result.revision}：${result.path}`)
+    } catch (e) { setError(errorText(e)) } finally { setExporting(false) }
   }
   async function exportCode() {
-    setError(''); setMessage('')
+    if (exporting) return
+    setExporting(true); setError(''); setMessage('')
     try {
       if (replace) {
         if (!hasOriginalPath) throw new Error('此子图没有可替换的外部 Python 源文件。')
@@ -293,14 +311,19 @@ function ExportDialog({ plot, stem, hasOriginalPath, onClose }: { plot: Plot; st
         setMessage(`已替换 ${result.path}${result.backup ? `；原文件备份：${result.backup}` : ''}`)
         return
       }
+      if (browserDirectory) {
+        const blob = await exportBlob(`/plots/${plot.id}/code-package?revision=${plot.revision}`)
+        const path = await saveBrowserExport(browserDirectory, `${filename}-代码与数据.zip`, blob)
+        setMessage(`代码与数据包已导出至 ${path}`); return
+      }
       if (!directory && !isDesktop()) { await download(`/plots/${plot.id}/code-package`, `${plot.name}-code.zip`); setMessage('代码与数据包已下载。'); return }
       const chosen = directory || await pickDirectory('选择代码导出目录')
       if (!chosen) return
       const result = await post<{ path: string; backup?: string }>(`/plots/${plot.id}/export-code`, { directory: chosen, replace })
       localStorage.setItem('workbench.exportDirectory', chosen); setDirectory(chosen); setMessage(`已导出至 ${result.path}${result.backup ? `；备份：${result.backup}` : ''}`)
-    } catch (e) { setError(errorText(e)) }
+    } catch (e) { setError(errorText(e)) } finally { setExporting(false) }
   }
-  return <Dialog open title="导出图形与代码" description={plot.name} onOpenChange={(v) => { if (!v) onClose() }} width={580} anchor="workbench-export"><div className="wb-export-form"><h3>图形文件</h3><div className="wb-export-formats">{['png', 'svg', 'pdf'].map((format) => <Button key={format} variant="secondary" onClick={() => exportImage(format)} data-wb-export-format={format}><Download />{format.toUpperCase()}{format === 'png' && <span className="wb-muted">600 dpi</span>}</Button>)}</div><div className="wb-divider" /><h3>Python 代码与数据</h3><p className="wb-help">导出独立运行的脚本及数据快照。模板源文件受到保护。</p>{!replace && <div className="wb-path-row"><TextInput aria-label="代码导出目录" placeholder={isDesktop() ? '请选择输出目录' : '输入服务器可访问的目录；留空则下载 ZIP'} value={directory} onChange={(e) => setDirectory(e.target.value)} />{isDesktop() && <Button onClick={async () => { const path = await pickDirectory('选择代码导出目录'); if (path) setDirectory(path) }}>浏览…</Button>}</div>}{hasOriginalPath ? <Select ariaLabel="代码保存方式" value={replace ? 'replace' : 'new'} onChange={(v) => setReplace(v === 'replace')} options={[{ value: 'new', label: '另存为新代码文件' }, { value: 'replace', label: '替换原始 Python 文件（自动备份）' }]} /> : <p className="wb-help">此子图没有可替换的外部源文件；另存时会保留已有文件并创建新文件。</p>}<Button variant="secondary" onClick={exportCode}><FileCodeCorner />{replace ? '替换原始代码' : !directory && !isDesktop() ? '下载代码包 ZIP' : '导出代码与数据'}</Button>{error && <p className="wb-error" role="alert">{error}</p>}{message && <p className="wb-notice" role="status">{message}</p>}</div></Dialog>
+  return <Dialog open title="导出图形与代码" description={plot.name} onOpenChange={(v) => { if (!v) onClose() }} width={620} busy={exporting} anchor="workbench-export"><div className="wb-export-form"><h3>图形文件 · 已保存版本 r{plot.revision}</h3><ExportDestination directory={directory} filename={filename} onDirectory={setDirectory} onFilename={setFilename} disabled={exporting} browserDirectory={browserDirectory} onBrowserDirectory={setBrowserDirectory} /><p className="wb-help">文件名无需扩展名。下方 PNG、SVG、PDF 均保存到以上目录，包含已保存的图内编辑。</p><div className="wb-export-formats">{['png', 'svg', 'pdf'].map((format) => <Button key={format} variant="secondary" disabled={exporting || !filename.trim()} onClick={() => exportImage(format)} data-wb-export-format={format}><Download />{format.toUpperCase()}{format === 'png' && <span className="wb-muted">600 dpi</span>}</Button>)}</div><div className="wb-divider" /><h3>Python 代码与数据</h3><p className="wb-help">导出独立运行的脚本及数据快照。模板源文件受到保护。</p><p className="wb-help">另存代码与数据时使用上方导出目录；代码文件会自动另起名称。</p>{hasOriginalPath ? <Select ariaLabel="代码保存方式" value={replace ? 'replace' : 'new'} onChange={(v) => setReplace(v === 'replace')} options={[{ value: 'new', label: '另存为新代码文件' }, { value: 'replace', label: '替换原始 Python 文件（自动备份）' }]} /> : <p className="wb-help">此子图没有可替换的外部源文件；另存时会保留已有文件并创建新文件。</p>}<Button variant="secondary" disabled={exporting} onClick={exportCode}><FileCodeCorner />{replace ? '替换原始代码' : !directory && !isDesktop() ? '下载代码包 ZIP' : '导出代码与数据'}</Button>{error && <p className="wb-error" role="alert">{error}</p>}{message && <p className="wb-notice" role="status">{message}</p>}</div></Dialog>
 }
 function useDraftGuard(dirty: boolean, onDirtyChange?: (dirty: boolean) => void) {
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false) }, [dirty, onDirtyChange])

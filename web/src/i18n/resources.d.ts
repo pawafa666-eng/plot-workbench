@@ -137,6 +137,9 @@ export default interface Resources {
       "reload": "重新加载",
       "save": "保存"
     },
+    "codeBlock": {
+      "showAll": "显示全部 {{count}} 行（复制按钮始终复制完整代码）"
+    },
     "colorField": {
       "none": "无",
       "picker": "{{label}}：取色盘"

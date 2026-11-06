@@ -8,6 +8,24 @@
 @import '@sfinterface/numbers/styles.css';
 @import 'tailwindcss' source('../src');
 
+.code-block { min-width:0; border:1px solid var(--color-border); border-radius:8px; overflow:hidden; background:var(--color-surface); }
+.code-block-heading { display:flex; align-items:center; gap:12px; padding:7px 12px; border-bottom:1px solid var(--color-border); background:var(--color-surface-2); color:var(--color-ink-2); font-size:12px; }
+.code-block-heading > button:last-child { margin-left:auto; }
+.code-block-scroll { max-height:480px; overflow:auto; overscroll-behavior:contain; }
+.code-block pre { margin:0; padding:10px 0; width:max-content; min-width:100%; font:12px/21px Consolas,"Cascadia Code",monospace; white-space:pre; tab-size:4; color:var(--color-ink); user-select:text; -webkit-user-select:text; }
+.code-block code { font:inherit; }
+.code-line { display:flex; min-height:21px; padding-right:16px; }
+.code-gutter { flex:0 0 50px; text-align:right; padding-right:14px; color:var(--color-ink-3); user-select:none; -webkit-user-select:none; }
+.code-diff-sign { width:18px; flex:none; user-select:none; -webkit-user-select:none; }
+.code-keyword { color:var(--color-accent); font-weight:600; }
+.code-string { color:var(--color-ok); }
+.code-comment { color:var(--color-ink-3); font-style:italic; }
+.code-number { color:var(--color-danger); }
+.code-removed { background:var(--color-danger-subtle); }
+.code-added { background:var(--color-ok-subtle); }
+.code-removed-key { color:var(--color-danger); }
+.code-added-key { color:var(--color-ok); }
+
 /* ---------------------------------------------------------------------------
    Tavotto — design tokens（Design Constitution 的落地；全文见
    docs/ux/DESIGN_CONSTITUTION.md，这里只放值与一句理由）

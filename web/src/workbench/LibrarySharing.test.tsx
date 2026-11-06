@@ -3,9 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { LibrarySharing } from './LibrarySharing'
-import { download } from './api'
 
-vi.mock('./api', async (original) => ({ ...await original<typeof import('./api')>(), download: vi.fn(async () => {}) }))
 vi.mock('@/components/ui/Select', () => ({ Select: ({ value, onChange, options, disabled }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; disabled?: boolean }) => <select data-test-select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select> }))
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -14,8 +12,11 @@ beforeEach(() => {
   document.body.innerHTML = '<div id="sharing-test"></div>'
   root = createRoot(document.getElementById('sharing-test')!)
   vi.clearAllMocks()
+  localStorage.clear()
+  localStorage.setItem('workbench.exportDirectory', 'D:\\exports')
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => ({ ok: true, json: async () => String(input).includes('/library/import')
     ? { templates: [{ id: 'new', name: 'Imported' }], palettes: [{ id: 'new-palette', name: 'Imported palette' }] }
+    : String(input).includes('/library/export') ? { path: 'D:\\exports\\分享.zip' }
     : String(input).includes('/templates') ? { templates: [{ id: 't1', name: '曲线模板', scope: 'global' }, { id: 'other', name: '其他项目', scope: 'project', project_id: 'other-project' }] }
     : { palettes: [{ id: 'p1', name: '蓝橙', colors: ['#123456', '#ABCDEF'] }, { id: 'p2', name: '灰度', colors: ['#111111'] }] } } as Response)))
 })
@@ -39,8 +40,8 @@ it('exports only checked entries and retains selections when switching type', as
   expect(document.querySelectorAll('[data-share-item]')).toHaveLength(1)
   await click('[data-share-item="templates:t1"]')
   await click('[data-share-export-confirm]')
-  const init = vi.mocked(download).mock.calls[0][2]!
-  expect(JSON.parse(String(init.body))).toEqual({ template_ids: ['t1'], palette_ids: ['p1'] })
+  const init = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/library/export'))![1]!
+  expect(JSON.parse(String(init.body))).toEqual({ template_ids: ['t1'], palette_ids: ['p1'], directory: 'D:\\exports', filename: expect.stringMatching(/^导出-\d{4}-\d{2}-\d{2}\.zip$/) })
   expect(document.querySelector('[data-library-share-result]')!.textContent).toContain('2 项')
 })
 

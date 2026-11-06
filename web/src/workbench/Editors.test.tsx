@@ -39,6 +39,7 @@ it('requires a fresh verified run before saving a shared template draft', async 
 })
 
 it('selects every saved figure and exports the selected stem', async () => {
+  localStorage.setItem('workbench.exportDirectory', 'D:\\figure')
   await renderPlot()
   const second = document.querySelector<HTMLButtonElement>('[data-wb-output="figure_2"]')
   expect(second).toBeTruthy()
@@ -46,7 +47,9 @@ it('selects every saved figure and exports the selected stem', async () => {
   expect(document.querySelector<HTMLImageElement>('[data-wb-preview-image]')?.getAttribute('src')).toBe('/second.png')
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-export]')!.click())
   await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-export-format="png"]')!.click())
-  expect(download).toHaveBeenCalledWith('/plots/plot-one/export?format=png&stem=figure_2', '普通脚本-figure_2.png')
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/export-image'))!
+  expect(JSON.parse(String(request[1]?.body))).toEqual({ format: 'png', stem: 'figure_2', revision: 1, directory: 'D:\\figure', filename: '普通脚本-figure_2.png' })
+  expect(download).not.toHaveBeenCalled()
 })
 
 it('hands the selected figure to Tavotto and preserves locked code', async () => {

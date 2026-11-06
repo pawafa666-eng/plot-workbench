@@ -1,3 +1,4 @@
+import { CodeBlock } from '@/components/ui/CodeBlock'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -174,6 +175,6 @@ export function RecoveryDialog({ onClose, onRecover }: { onClose: () => void; on
     {error && <p className="wb-error" role="alert">{error}</p>}
     {workspace.problems.map((problem, i) => <p key={i} className="wb-error">{problem}</p>)}
     <div className="wb-recovery-layout"><div className="wb-recovery-list">{workspace.drafts.map((draft) => <Button key={draft.id} active={selected?.id === draft.id} disabled={busy} data-wb-draft-item={draft.id} onClick={() => void choose(draft.id)}><strong>{draft.name}</strong><small>{draft.kind === 'canvas' ? '图内编辑' : draft.kind === 'plot' ? '绘图代码与数据' : '模板'} · {draft.updated_at ? new Date(draft.updated_at).toLocaleString() : ''}</small></Button>)}{!workspace.drafts.length && <p className="wb-muted">没有待恢复草稿。</p>}</div>
-      <div className="wb-recovery-detail">{selected ? <><h3>{selected.name}</h3><p className="wb-muted">来源版本 r{selected.base_revision} · 草稿修订 {selected.generation}</p>{selected.kind === 'canvas' ? <><p>保留 {Array.isArray(selected.content.patches) ? selected.content.patches.length : 0} 项图内编辑。载入后点击“运行并恢复图内草稿”才建立画布。</p><pre>{JSON.stringify(selected.content.patches, null, 2)}</pre></> : <><p>代码、数据快照与数据规范将一起恢复。</p><pre>{String(selected.content.code ?? '')}</pre></>}</> : <p className="wb-muted">选择左侧草稿查看内容。</p>}</div></div>
+      <div className="wb-recovery-detail">{selected ? <><h3>{selected.name}</h3><p className="wb-muted">来源版本 r{selected.base_revision} · 草稿修订 {selected.generation}</p>{selected.kind === 'canvas' ? <><p>保留 {Array.isArray(selected.content.patches) ? selected.content.patches.length : 0} 项图内编辑。载入后点击“运行并恢复图内草稿”才建立画布。</p><pre>{JSON.stringify(selected.content.patches, null, 2)}</pre></> : <><p>代码、数据快照与数据规范将一起恢复。</p><CodeBlock code={String(selected.content.code ?? '')} /></>}</> : <p className="wb-muted">选择左侧草稿查看内容。</p>}</div></div>
   </Dialog>
 }

@@ -60,5 +60,8 @@
     "polygon": "Polygon",
     "rect": "Rectangle",
     "triangle": "Triangle"
+  },
+  "codeBlock": {
+    "showAll": "Show all {{count}} lines (Copy always includes the full code)"
   }
 }

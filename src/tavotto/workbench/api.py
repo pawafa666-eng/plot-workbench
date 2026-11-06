@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import re
@@ -18,7 +19,9 @@ from flask import Blueprint, jsonify, request, send_file
 from tavotto.engine import atomicio, config
 
 from . import VERSION, data as table_data
+from .codeview import history_comparison
 from .data_process import run_operation
+from .exportfiles import save_export
 from .history import list_history, restore_copy, revision_record
 from .palettes import PaletteStore
 from .recovery import MAX_DRAFT_BYTES, DraftStore
@@ -386,8 +389,8 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     @bp.get("/history/<kind>/<entity_id>/<int:revision>")
     def get_history_record(kind, entity_id, revision):
         with manager.lock:
-            _, record, _ = revision_record(manager.store, kind, entity_id, revision)
-            return jsonify(_public(record))
+            current, record, _ = revision_record(manager.store, kind, entity_id, revision)
+            return jsonify({**_public(record), **history_comparison(record, current)})
 
     @bp.get("/history/<kind>/<entity_id>/<int:revision>/preview/<stem>")
     def get_history_preview(kind, entity_id, revision, stem):
@@ -438,6 +441,11 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
                 body.get("palette_ids", []),
                 project_id,
             )
+            if "directory" in body:
+                path = save_export(
+                    body["directory"], body.get("filename"), archive.getvalue(), "zip"
+                )
+                return jsonify({"path": str(path)})
         return send_file(
             archive,
             mimetype="application/zip",
@@ -792,6 +800,14 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def list_trash():
         return jsonify({"items": manager.store.list_trash()})
 
+    @bp.post("/trash/delete")
+    def purge_trash():
+        body = _body()
+        with manager.lock:
+            if library_path(_need(body, "library_root")) != manager.root:
+                raise WorkbenchError("当前库已变化，请刷新回收站", "library_changed", 409)
+            return jsonify(manager.store.purge_trash(body.get("ids")))
+
     @bp.post("/trash/<trash_id>/restore")
     def restore_trash(trash_id):
         return jsonify(manager.store.restore(trash_id))
@@ -874,26 +890,49 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
     def export_plot(plot_id):
         fmt = request.args.get("format", "").lower()
         stem = request.args.get("stem", "figure")
-        path = manager.service.export_path(plot_id, fmt, stem)
-        return send_file(
-            path,
-            mimetype={"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}[fmt],
-            as_attachment=True,
-            download_name=f"{manager.store.get_plot(plot_id)['name']}{'_' + stem if stem != 'figure' else ''}.{fmt}",
-        )
+        with manager.lock, manager.service.lock, manager.store.lock:
+            plot = manager.store.get_plot(plot_id)
+            expected = request.args.get("revision")
+            if expected is not None and expected != str(plot["revision"]):
+                raise WorkbenchError("图形版本已变化，请重新打开导出窗口", "export_conflict", 409)
+            path = manager.service.export_path(plot_id, fmt, stem)
+            return send_file(
+                io.BytesIO(path.read_bytes()),
+                mimetype={"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}[
+                    fmt
+                ],
+                as_attachment=True,
+                download_name=f"{plot['name']}{'_' + stem if stem != 'figure' else ''}.{fmt}",
+            )
 
     @bp.post("/plots/<plot_id>/export-image")
     def save_image_file(plot_id):
         body = _body()
         fmt, stem = body.get("format", "png"), body.get("stem", "figure")
-        source = manager.service.export_path(plot_id, fmt, stem)
-        plot = manager.store.get_plot(plot_id)
-        directory = inside(
-            manager.store.project_dir(plot["project_id"]), f"exports/{plot_id}/{plot['revision']}"
-        )
-        destination = inside(directory, f"{stem}.{fmt}")
-        atomicio.write_bytes(destination, source.read_bytes())
-        return jsonify({"path": str(destination)})
+        with manager.lock, manager.service.lock, manager.store.lock:
+            source = manager.service.export_path(plot_id, fmt, stem)
+            plot = manager.store.get_plot(plot_id)
+            if "directory" in body and (
+                type(body.get("revision")) is not int or body["revision"] != plot["revision"]
+            ):
+                raise WorkbenchError("图形版本已变化，请重新打开导出窗口", "export_conflict", 409)
+            content = source.read_bytes()
+            if "directory" in body:
+                destination = save_export(body["directory"], body.get("filename"), content, fmt)
+            else:
+                directory = inside(
+                    manager.store.project_dir(plot["project_id"]),
+                    f"exports/{plot_id}/{plot['revision']}",
+                )
+                destination = inside(directory, f"{stem}.{fmt}")
+                atomicio.write_bytes(destination, content)
+            return jsonify(
+                {
+                    "path": str(destination),
+                    "revision": plot["revision"],
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            )
 
     @bp.post("/plots/<plot_id>/export-code")
     def export_code(plot_id):
@@ -918,28 +957,36 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
 
     @bp.get("/plots/<plot_id>/code-package")
     def download_code_package(plot_id):
-        manager.service.export_path(plot_id, "png")
-        plot = manager.store.get_plot(plot_id)
-        if not plot.get("revision"):
-            raise WorkbenchError("请先保存成功运行的子图", "unsaved_plot", 409)
-        with tempfile.TemporaryDirectory(prefix="pwb-zip-", dir=manager.service.root) as scratch:
-            source = Path(scratch) / f"plot_{plot_id[:8]}.py"
-            manager.service._write_code_package(plot, source)
-            stream = io.BytesIO()
-            with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.write(source, source.name)
-                for path in source.parent.iterdir():
-                    if path.is_dir():
-                        for nested in path.rglob("*"):
-                            if nested.is_file():
-                                archive.write(nested, nested.relative_to(source.parent).as_posix())
-            stream.seek(0)
-            return send_file(
-                stream,
-                mimetype="application/zip",
-                as_attachment=True,
-                download_name=f"{plot['name']}-code.zip",
-            )
+        with manager.lock, manager.service.lock, manager.store.lock:
+            manager.service.export_path(plot_id, "png")
+            plot = manager.store.get_plot(plot_id)
+            expected = request.args.get("revision")
+            if expected is not None and expected != str(plot["revision"]):
+                raise WorkbenchError("图形版本已变化，请重新打开导出窗口", "export_conflict", 409)
+            if not plot.get("revision"):
+                raise WorkbenchError("请先保存成功运行的子图", "unsaved_plot", 409)
+            with tempfile.TemporaryDirectory(
+                prefix="pwb-zip-", dir=manager.service.root
+            ) as scratch:
+                source = Path(scratch) / f"plot_{plot_id[:8]}.py"
+                manager.service._write_code_package(plot, source)
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                    archive.write(source, source.name)
+                    for path in source.parent.iterdir():
+                        if path.is_dir():
+                            for nested in path.rglob("*"):
+                                if nested.is_file():
+                                    archive.write(
+                                        nested, nested.relative_to(source.parent).as_posix()
+                                    )
+                stream.seek(0)
+                return send_file(
+                    stream,
+                    mimetype="application/zip",
+                    as_attachment=True,
+                    download_name=f"{plot['name']}-code.zip",
+                )
 
     @bp.get("/artifact/<kind>/<entity_id>/<int:revision>/<filename>")
     def artifact(kind, entity_id, revision, filename):

@@ -1,3 +1,4 @@
+import { CopyButton } from '../ui/CopyButton'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
@@ -31,10 +32,10 @@ const STYLES: Record<LineKind, string> = {
 function DiffBody({ lines, maxH }: { lines: string[]; maxH: string }) {
   return (
     <div className={cn('overflow-auto', maxH)}>
-      <pre className="w-max min-w-full font-mono text-xs leading-[1.5]">
+      <pre className="select-text w-max min-w-full font-mono text-xs leading-[1.5]">
         {lines.map((line, i) => (
           <div key={i} className={cn('whitespace-pre px-2', STYLES[classify(line)])}>
-            {line || ' '}
+            {line || ' '}{'\n'}
           </div>
         ))}
       </pre>
@@ -43,7 +44,7 @@ function DiffBody({ lines, maxH }: { lines: string[]; maxH: string }) {
 }
 
 /** unified diff：侧栏里给个紧凑预览，放大后在对话框里完整看 */
-export function DiffView({ diff, script }: { diff: string; script?: string }) {
+export function DiffView({ diff, script, code }: { diff: string; script?: string; code?: string }) {
   useTranslation('ai')
   const [open, setOpen] = useState(false)
   const lines = useMemo(() => diff.replace(/\n$/, '').split('\n'), [diff])
@@ -60,6 +61,7 @@ export function DiffView({ diff, script }: { diff: string; script?: string }) {
           {/* 计数是数值读数，不是代码：`type-number`（系统字体 + tabular-nums，第六节） */}
           <span className="type-number ml-auto text-ok">+{added}</span>
           <span className="type-number text-danger">−{removed}</span>
+          <CopyButton appearance="icon" label={code === undefined ? '复制差异' : '复制代码'} text={code ?? diff} />
           <Tip label={translate('diff.zoomTip', { ns: 'ai' })}>
             <Button size="icon-sm" className="-mr-1" onClick={() => setOpen(true)} aria-label={translate('diff.zoomAria', { ns: 'ai' })}>
               <Maximize2 size={ICON_SIZE.sm} />

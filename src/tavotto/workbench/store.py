@@ -441,6 +441,9 @@ class WorkbenchStore:
                 "original_path": str(
                     inside(record["working_directory"], source["original_relative_path"])
                 ),
+                "original_directory": str(
+                    inside(record["working_directory"], source["original_relative_path"]).parent
+                ),
             }
         return record
 
@@ -848,13 +851,55 @@ class WorkbenchStore:
         return [
             read_json(path)
             for path in (self.root / "trash").glob("*/trash.json")
-            if (path.parent / "content").is_dir()
+            if (path.parent / "content").is_dir() or read_json(path).get("deletion_pending")
         ]
+
+    def purge_trash(self, trash_ids):
+        """Delete only explicitly selected, owned trash entries; never original_path."""
+        if not isinstance(trash_ids, list) or not trash_ids or len(trash_ids) > 10000:
+            raise WorkbenchError("请选择要永久删除的回收站项目")
+        ids = list(dict.fromkeys(checked_id(value) for value in trash_ids))
+        deleted, failed = [], []
+        with self.lock:
+            for entry_id in ids:
+                try:
+                    entry = inside(self.root, Path("trash") / entry_id)
+                    metadata = entry / "trash.json"
+                    item = read_json(metadata)
+                    if item.get("id") != entry_id:
+                        raise WorkbenchError("回收站项目已变化，请刷新后重试")
+                    pending = [entry]
+                    while pending:
+                        candidate = pending.pop()
+                        # Refuse links and Windows junctions before traversing children.
+                        attrs = getattr(candidate.lstat(), "st_file_attributes", 0)
+                        if candidate.is_symlink() or attrs & 0x400:
+                            raise WorkbenchError("项目含文件链接，未永久删除")
+                        if candidate.is_dir():
+                            pending.extend(candidate.iterdir())
+                    if any(
+                        child.name not in {"content", "trash.json"} for child in entry.iterdir()
+                    ):
+                        raise WorkbenchError("回收站目录含未知文件，未永久删除")
+                    atomicio.write_json(metadata, {**item, "deletion_pending": True})
+                    content = inside(entry, "content")
+                    if content.exists():
+                        shutil.rmtree(content)
+                    metadata.unlink()
+                    entry.rmdir()
+                    deleted.append(entry_id)
+                except (OSError, WorkbenchError) as exc:
+                    failed.append({"id": entry_id, "message": str(exc)})
+        return {"deleted": deleted, "failed": failed}
 
     def restore(self, trash_id):
         with self.lock:
             path = inside(self.root, Path("trash") / checked_id(trash_id))
             item = read_json(path / "trash.json")
+            if item.get("deletion_pending"):
+                raise WorkbenchError(
+                    "该项目正在永久删除，请重试删除，不能恢复部分内容", "trash_deleting", 409
+                )
             if item["kind"] not in ("project", "plot", "template"):
                 raise WorkbenchError("未知回收站类型")
             checked_id(item["entity_id"])

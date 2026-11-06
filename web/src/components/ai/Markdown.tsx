@@ -1,3 +1,5 @@
+import { Children, isValidElement, type ReactNode } from 'react'
+import { CodeBlock } from '@/components/ui/CodeBlock'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { t } from '@/i18n'
 import { rehypeStreamWords } from '@/lib/streamMarkdown'
@@ -70,11 +72,14 @@ const components: Components = {
     }
     return <code className="font-mono text-xs leading-[1.5] text-ink">{children}</code>
   },
-  pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-sm border border-border bg-surface-2 p-2">
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => {
+    const child = Children.toArray(children)[0]
+    if (isValidElement<{ children?: ReactNode; className?: string }>(child)) {
+      const language = child.props.className?.replace('language-', '') ?? 'text'
+      return <CodeBlock code={String(child.props.children ?? '').replace(/\n$/, '')} title={language === 'text' ? '代码' : language} language={language} />
+    }
+    return <pre className="overflow-x-auto">{children}</pre>
+  },
 
   table: ({ children }) => (
     <div className="overflow-x-auto">

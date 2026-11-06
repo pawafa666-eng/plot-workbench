@@ -25,6 +25,7 @@ export interface Category { id: string; name: string; scope: 'global' | 'project
 export interface Status { root: string; version: string; projects: Project[]; library_confirmed?: boolean }
 export interface Job {
   id: string; status: 'running' | 'success' | 'error' | 'cancelled'; error?: string; traceback?: string
+  execution_context?: { source_path?: string; working_directory: string; mode: 'excel' | 'script' | 'project' }
   result?: { run_id: string; preview_url: string; outputs?: FigureOutput[]; data?: Snapshot; schema?: Schema }
 }
 export interface Run { runId: string; fingerprint: string; previewUrl: string; outputs?: FigureOutput[] }
@@ -44,11 +45,15 @@ export const patch = <T,>(path: string, body: unknown) => api<T>(path, { method:
 export const remove = (path: string) => api<unknown>(path, { method: 'DELETE' })
 export const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
 export async function download(path: string, filename: string, init: RequestInit = {}): Promise<void> {
-  const response = await fetch(`/api/workbench${path}`, { credentials: 'same-origin', ...init })
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message ?? body.error ?? '导出失败') }
-  const href = URL.createObjectURL(await response.blob())
+  const blob = await exportBlob(path, init)
+  const href = URL.createObjectURL(blob)
   const link = document.createElement('a'); link.href = href; link.download = filename; link.click()
   setTimeout(() => URL.revokeObjectURL(href), 1000)
+}
+export async function exportBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const response = await fetch(`/api/workbench${path}`, { credentials: 'same-origin', ...init })
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message ?? body.error ?? '导出失败') }
+  return response.blob()
 }
 export const STARTER_CODE = `import pandas as pd
 import matplotlib.pyplot as plt

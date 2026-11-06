@@ -9,25 +9,15 @@
  * 的按钮。行号放在 aria-hidden + select-none 的独立列里——屏幕阅读器读到的
  * 与复制到剪贴板的都只有代码本身。打开它**不触发任何 Pyodide 加载**。
  */
-import { useEffect, useState } from 'react'
-import { Check, Copy, Play } from '@/components/ui/icons'
+import { Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Dialog } from '@/components/ui/Dialog'
-import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
 import { pg } from '../pgText'
-import { tokenizePython, type TokenKind } from '../pythonHighlight'
+import { CodeBlock } from '@/components/ui/CodeBlock'
 
 //: 技术名词，语言中立，不进翻译（与 runtime 包名同一口径）
 const CODE_DEPS = ['NumPy', 'Matplotlib'].join(' · ')
-
-const TOKEN_CLASS: Record<TokenKind, string> = {
-  comment: 'text-ink-3 italic',
-  string: 'text-[#7a5a2b]',
-  number: 'text-[#2868b7]',
-  keyword: 'text-[#8a3350] font-medium',
-  plain: '',
-}
 
 export function ExampleCodeSheet({
   example,
@@ -38,21 +28,7 @@ export function ExampleCodeSheet({
   onClose: () => void
   onStart: (example: PlaygroundExample) => void
 }) {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => setCopied(false), [example])
-
   if (!example) return null
-  const lines = tokenizePython(example.source)
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(example.source)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // 剪贴板被策略挡住：不装成功
-    }
-  }
 
   return (
     <Dialog
@@ -73,13 +49,6 @@ export function ExampleCodeSheet({
       footer={
         <>
           <button
-            onClick={() => void copy()}
-            className="flex h-7 items-center gap-1.5 rounded-sm border border-border px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-          >
-            {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
-            {copied ? pg('copied') : pg('copyCode')}
-          </button>
-          <button
             onClick={() => onStart(example)}
             className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs font-medium text-white transition-opacity hover:opacity-90"
           >
@@ -89,34 +58,7 @@ export function ExampleCodeSheet({
         </>
       }
     >
-      <div className="overflow-x-auto rounded-sm border border-border bg-bg">
-        <pre className="flex min-w-max p-3 font-mono text-sm leading-[1.7] text-ink-2">
-          {/* 行号列：aria-hidden + select-none——复制与朗读都只有代码本身 */}
-          <span
-            aria-hidden
-            className="mr-3 select-none border-r border-border pr-3 text-right text-ink-faint"
-          >
-            {lines.map((_, i) => (
-              <span key={i} className="block">
-                {i + 1}
-              </span>
-            ))}
-          </span>
-          <code>
-            {lines.map((tokens, i) => (
-              <span key={i} className="block">
-                {tokens.length === 0
-                  ? ' '
-                  : tokens.map((tk, j) => (
-                      <span key={j} className={cn(TOKEN_CLASS[tk.kind])}>
-                        {tk.text}
-                      </span>
-                    ))}
-              </span>
-            ))}
-          </code>
-        </pre>
-      </div>
+      <CodeBlock code={example.source} title={example.filename} />
     </Dialog>
   )
 }

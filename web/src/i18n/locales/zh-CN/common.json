@@ -59,5 +59,8 @@
     "polygon": "多边形",
     "rect": "矩形",
     "triangle": "三角形"
+  },
+  "codeBlock": {
+    "showAll": "显示全部 {{count}} 行（复制按钮始终复制完整代码）"
   }
 }

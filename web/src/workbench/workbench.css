@@ -179,3 +179,35 @@
 [data-dialog="workbench-code-assistant"] .wb-assistant-options>label { width:180px; }
 [data-dialog="workbench-code-assistant"] .wb-assistant-options>button { flex:none; }
 [data-dialog="workbench-code-assistant"] .wb-assistant-toolbar { flex-wrap:wrap; }
+
+.wb-error-panel,.wb-error-panel pre,.wb-error-context { user-select:text; -webkit-user-select:text; }
+.wb-error-panel .wb-toolbar { flex-wrap:wrap; align-items:center; }
+.wb-error-panel .wb-toolbar > span { min-width:0; overflow-wrap:anywhere; }
+.wb-error-panel pre { white-space:pre; max-height:360px; overflow:auto; padding:12px; font:12px/1.7 Consolas,"Cascadia Code",monospace; }
+.wb-error-context { overflow-wrap:anywhere; margin-top:10px; font-size:12px; }
+.wb-history-layout { grid-template-columns:230px minmax(0,1fr); }
+.wb-history-sidebar { border-right:1px solid var(--color-border); padding-right:12px; min-width:0; }
+.wb-history-list-heading { display:flex; justify-content:space-between; color:var(--color-ink-2); font-size:12px; padding:0 8px 12px; }
+.wb-history-versions { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; max-height:520px; overflow:auto; }
+.wb-history-version { width:100%; height:auto; min-height:68px; display:flex; justify-content:flex-start; align-items:center; gap:10px; padding:12px 10px; text-align:left; white-space:normal; border:1px solid var(--color-border); border-radius:8px; }
+.wb-history-version[aria-pressed=true] { border-color:var(--color-accent); background:var(--color-selected); }
+.wb-history-revision { flex:none; font:600 14px/1.5 Consolas,monospace; color:var(--color-ink); }
+.wb-history-version-info { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:12px; line-height:1.5; }
+.wb-history-version-info time { color:var(--color-ink-3); font-size:11px; font-variant-numeric:tabular-nums; }
+.wb-history-current { display:inline-block; margin-left:6px; color:var(--color-ok); font-size:10px; }
+.wb-code-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; min-width:0; }
+.wb-graph-diff { margin-top:16px; }
+.wb-graph-diff summary { cursor:pointer; font-size:12px; padding:10px 0; }
+.wb-recovery-detail .code-block pre { white-space:pre; overflow-wrap:normal; padding:10px 0; }
+.wb-export-destination { display:grid; gap:12px; padding:14px 0; }
+.wb-export-destination .wb-field { min-width:0; }
+.wb-export-destination .wb-path-row { margin:0; }
+.wb-export-form .wb-notice { white-space:normal; overflow-wrap:anywhere; user-select:text; -webkit-user-select:text; }
+.wb-trash-list > div { flex-wrap:wrap; gap:12px; padding:14px; }
+.wb-trash-list time { font-variant-numeric:tabular-nums; white-space:nowrap; }
+@media(max-width:760px) { .wb-history-layout { grid-template-columns:minmax(0,1fr); } .wb-history-sidebar { border-right:0; padding-right:0; } .wb-history-versions { max-height:200px; } .wb-code-comparison { grid-template-columns:minmax(0,1fr); } }
+
+.wb-trash-list > div > button { margin-left:0; }
+.wb-trash-list > div > time { margin-left:auto; }
+.wb-trash-list > div > strong { min-width:0; max-width:280px; overflow-wrap:anywhere; }
+[data-wb-history-view] { min-width:150px; }

@@ -1,3 +1,6 @@
+import { saveBrowserExport } from './browserExport'
+import { ExportDestination } from './ExportDestination'
+import { defaultExportName } from './dateTime'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Checkbox } from '@/components/ui/Checkbox'
@@ -5,7 +8,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { TextInput } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Download, Upload } from '@/components/ui/icons'
-import { api, download, errorText, type Template } from './api'
+import { api, post, exportBlob, errorText, type Template } from './api'
 import type { Palette } from './paletteModel'
 
 type Kind = 'templates' | 'palettes'
@@ -15,6 +18,9 @@ interface Entry { key: string; id: string; kind: Kind; name: string; detail: str
 export function LibrarySharing({ kind, projectId, templateScope = 'global', onImported }: {
   kind: Kind; projectId?: string; templateScope?: 'global' | 'project'; onImported: () => Promise<void>
 }) {
+  const [directory, setDirectory] = useState(() => localStorage.getItem('workbench.exportDirectory') ?? '')
+  const [browserDirectory, setBrowserDirectory] = useState<FileSystemDirectoryHandle | null>(null)
+  const [filename, setFilename] = useState(defaultExportName)
   const [mode, setMode] = useState<'export' | 'import' | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
   const [selected, setSelected] = useState<string[]>([])
@@ -47,7 +53,9 @@ export function LibrarySharing({ kind, projectId, templateScope = 'global', onIm
   }, [mode, projectId, templateScope])
   const visible = entries.filter((item) => (filter === 'all' || filter === item.kind) && item.name.toLowerCase().includes(search.toLowerCase()))
   function open(next: 'export' | 'import') {
-    setError(''); setMessage(''); setSelected([]); setEntries([]); setSearch(''); setFilter(kind); setScope(templateScope); setMode(next)
+    if (browserDirectory) setDirectory(localStorage.getItem('workbench.exportDirectory') ?? '')
+    setBrowserDirectory(null)
+    setError(''); setMessage(''); setSelected([]); setEntries([]); setSearch(''); setFilter(kind); setScope(templateScope); setFilename(defaultExportName()); setMode(next)
   }
   function toggle(key: string) { setSelected((old) => old.includes(key) ? old.filter((value) => value !== key) : [...old, key]) }
   function toggleVisible() {
@@ -59,8 +67,17 @@ export function LibrarySharing({ kind, projectId, templateScope = 'global', onIm
     busyRef.current = true; setBusy(true); setError('')
     try {
       const chosen = entries.filter((item) => selected.includes(item.key))
-      await download('/library/export', 'library-share.zip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ template_ids: chosen.filter((item) => item.kind === 'templates').map((item) => item.id), palette_ids: chosen.filter((item) => item.kind === 'palettes').map((item) => item.id), project_id: projectId }) })
-      if (mounted.current) { setMessage(`已导出 ${chosen.length} 项，可将 ZIP 文件发给其他人。`); setMode(null) }
+      if (!directory.trim()) throw new Error('请选择或输入导出目录。')
+      const body = { template_ids: chosen.filter((item) => item.kind === 'templates').map((item) => item.id), palette_ids: chosen.filter((item) => item.kind === 'palettes').map((item) => item.id), project_id: projectId }
+      let path: string
+      if (browserDirectory) {
+        const blob = await exportBlob('/library/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        path = await saveBrowserExport(browserDirectory, /\.zip$/i.test(filename) ? filename : `${filename}.zip`, blob)
+      } else {
+        const result = await post<{ path: string }>('/library/export', { ...body, directory, filename })
+        localStorage.setItem('workbench.exportDirectory', directory); path = result.path
+      }
+      if (mounted.current) { setMessage(`已导出 ${chosen.length} 项：${path}`); setMode(null) }
     } catch (failure) { if (mounted.current) setError(errorText(failure)) }
     finally { busyRef.current = false; if (mounted.current) setBusy(false) }
   }
@@ -88,7 +105,7 @@ export function LibrarySharing({ kind, projectId, templateScope = 'global', onIm
     </div>
     {mode && <Dialog open anchor={`library-${mode}`} width={mode === 'export' ? 680 : 520} busy={busy} title={mode === 'export' ? '导出模板与配色' : '导入分享包'} description={mode === 'export' ? '勾选需要分享的项目，打包为一个 ZIP 文件。' : '自动识别包内模板与配色，保存到本地。已有内容保留，同名项目另存为副本。'} onOpenChange={(value) => { if (!value && !busyRef.current) setMode(null) }} footer={mode === 'export' ? <><span className="wb-muted" data-share-selected-count>已选 {selected.length} 项</span><Button onClick={() => setMode(null)} disabled={busy}>取消</Button><Button variant="primary" data-share-export-confirm onClick={() => void exportZip()} disabled={busy || loading || !selected.length}>{busy ? '正在打包…' : '导出 ZIP'}</Button></> : <Button onClick={() => setMode(null)} disabled={busy}>关闭</Button>}>
       {error && <p className="wb-error" role="alert" data-share-error>{error}</p>}
-      {mode === 'export' ? <div className="wb-share-export">
+      {mode === 'export' ? <div className="wb-share-export"><ExportDestination directory={directory} filename={filename} onDirectory={setDirectory} onFilename={setFilename} disabled={busy} browserDirectory={browserDirectory} onBrowserDirectory={setBrowserDirectory} />
         <div className="wb-share-filters"><div className="wb-share-kind" data-share-kind><Select ariaLabel="分享内容类型" value={filter} disabled={busy} onChange={(value) => setFilter(value as Kind | 'all')} options={[{ value: 'all', label: '模板和配色' }, { value: 'templates', label: '模板' }, { value: 'palettes', label: '配色方案' }]} /></div><TextInput data-share-search disabled={busy} aria-label="搜索分享项目" placeholder="搜索名称…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <div className="wb-share-select-all"><Button data-share-select-all onClick={toggleVisible} disabled={busy || loading || !visible.length}>全选 / 取消当前列表</Button><span className="wb-muted">{visible.length} 项</span></div>
         <div className="wb-share-list">{visible.map((item) => <label className={`wb-share-row ${selected.includes(item.key) ? 'is-selected' : ''}`} key={item.key}>

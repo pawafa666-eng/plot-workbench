@@ -70,7 +70,7 @@ it('sends structural data only, shows live output and requires explicit applicat
   await act(async () => vi.advanceTimersByTimeAsync(650))
   expect(document.querySelector('[data-wb-assistant-diff]')).toBeNull()
   await expandDiff()
-  expect(document.querySelector('[data-wb-assistant-diff]')?.textContent).toBe(generated.diff)
+  expect(document.querySelector('[data-wb-assistant-diff] pre')?.textContent?.trimEnd()).toBe(generated.diff)
   expect(onApply).not.toHaveBeenCalled()
   await act(async () => button('apply').click())
   expect(onApply).toHaveBeenCalledWith(generated)
@@ -189,7 +189,7 @@ it('keeps the proposal open when staged application fails', async () => {
   await act(async () => button('apply').click())
   expect(document.querySelector('[data-wb-assistant-error]')?.textContent).toContain('candidate verification failed')
   await expandDiff()
-  expect(document.querySelector('[data-wb-assistant-diff]')?.textContent).toBe(generated.diff)
+  expect(document.querySelector('[data-wb-assistant-diff] pre')?.textContent?.trimEnd()).toBe(generated.diff)
   expect(onClose).not.toHaveBeenCalled()
 })
 

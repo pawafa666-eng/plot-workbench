@@ -54,6 +54,11 @@ def main(_capture=True):
     _context["data"] = _json.loads((_root / 'data.json').read_text("utf-8"))
     _context["working_directory"] = str(_root / 'inputs')
     _context["input_directory"] = str(_root / 'inputs')
+    if _context.get("source_filename"):
+        _context["original_path"] = str(_root / 'inputs' / _context["source_filename"])
+    import sys as _sys
+    if _context.get("original_directory"):
+        _sys.path.insert(0, _context["original_directory"])
     _figures, _snapshot = _helper.execute(PWB_SOURCE, _context["data"], _context.get("schema", {{}}),
         working_directory=_context["working_directory"], source_path=_context.get("original_path"),
         data_helper=_context["data_helper"], input_directory=_context["input_directory"],
@@ -167,6 +172,12 @@ class RenderService:
             directory = inside(self.store.project_dir(plot["project_id"]), f"cache/runs/{job_id}")
         else:
             directory = inside(self.root, job_id)
+        if payload.get("original_path") and schema.get("input_format") != "excel" and not snapshot:
+            original = Path(payload["original_path"]).expanduser()
+            original = inside(original.parent, original.name)
+            if not original.is_file():
+                raise WorkbenchError("原脚本路径不存在，请重新导入代码或同时导入 Excel")
+            working_directory = str(original.parent)
         directory.mkdir(parents=True)
         shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
         shutil.copy2(_MODULE_ROOT / "execution.py", directory / "execution.py")
@@ -200,6 +211,17 @@ class RenderService:
             "fingerprint": fingerprint(payload),
             "directory": str(directory),
             "working_directory": working_directory or str(directory),
+            "execution_context": {
+                "source_path": payload.get("original_path"),
+                "working_directory": str(directory / "inputs")
+                if schema.get("input_format") == "excel"
+                else working_directory or str(directory),
+                "mode": "excel"
+                if schema.get("input_format") == "excel"
+                else "script"
+                if payload.get("original_path")
+                else "project",
+            },
             "cancel": threading.Event(),
             "process": None,
             "created": time.monotonic(),
@@ -317,7 +339,11 @@ class RenderService:
         job = self.jobs.get(job_id)
         if not job:
             raise WorkbenchError("绘图任务不存在，请重新运行", "job_not_found", 404)
-        return {k: job[k] for k in ("id", "status", "error", "traceback", "result") if k in job}
+        return {
+            k: job[k]
+            for k in ("id", "status", "error", "traceback", "result", "execution_context")
+            if k in job
+        }
 
     def cancel_job(self, job_id):
         self.job(job_id)
@@ -356,7 +382,8 @@ class RenderService:
                 }
             if payload.get("original_path"):
                 source["original_path"] = payload["original_path"]
-                root = Path(job["working_directory"])
+                source["original_directory"] = str(Path(payload["original_path"]).resolve().parent)
+                root = self.store.working_directory(self.store.get_plot(plot_id)["project_id"])
                 original = Path(payload["original_path"]).resolve()
                 if original.is_relative_to(root):
                     source["original_relative_path"] = original.relative_to(root).as_posix()
@@ -420,14 +447,23 @@ class RenderService:
             shutil.copytree(source_inputs, directory / "inputs", dirs_exist_ok=True)
         else:
             (directory / "inputs").mkdir(exist_ok=True)
+        original = plot.get("source", {}).get("original_path")
+        source_name = (
+            "source.py"
+            if plot.get("schema", {}).get("input_format") == "excel"
+            else Path(original or "plot.py").name
+        )
+        staged_source = inside(directory / "inputs", source_name)
+        atomicio.write_bytes(staged_source, code.encode("utf-8"))
         atomicio.write_json(
             directory / "input.json",
             {
                 "data": plot.get("data"),
                 "schema": plot.get("schema") or {},
-                "working_directory": str(working_directory),
-                "original_directory": str(working_directory),
-                "original_path": plot.get("source", {}).get("original_path"),
+                "working_directory": str(directory / "inputs"),
+                "original_directory": plot.get("source", {}).get("original_directory")
+                or str(working_directory),
+                "original_path": str(staged_source),
                 "data_helper": str(directory / "data_helper.py"),
                 "input_directory": str(directory / "inputs"),
                 "input_files": plot.get("input_files", []),
@@ -442,7 +478,11 @@ _SPEC = importlib.util.spec_from_file_location("_pwb_execution", _ROOT / "execut
 _HELPER = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_HELPER)
 def main():
-    return _HELPER.capture(json.loads((_ROOT / "input.json").read_text("utf-8")), directory=_ROOT)
+    import sys
+    context = json.loads((_ROOT / "input.json").read_text("utf-8"))
+    if context.get("original_directory"):
+        sys.path.insert(0, context["original_directory"])
+    return _HELPER.capture(context, directory=_ROOT)
 """
         atomicio.write_bytes(directory / "adapter.py", adapter.encode("utf-8"))
         return directory
@@ -701,6 +741,12 @@ def main():
                 self._session(sid)
             except pool.WorkerError as exc:
                 self._discard_assistant_candidate(worker, directory)
+                if exc.code == "missing_input":
+                    raise WorkbenchError(
+                        f"Codex 候选代码无法读取已保存的数据快照，未应用；新增或更换数据请返回代码页导入并保存：{exc}",
+                        "assistant_render_failed",
+                        409,
+                    ) from exc
                 raise WorkbenchError(
                     f"Codex 候选代码无法运行，未应用：{exc}", "assistant_render_failed", 409
                 ) from exc
@@ -1011,12 +1057,22 @@ def main():
             shutil.copytree(inputs, assets / "inputs")
         else:
             (assets / "inputs").mkdir()
+        original = plot.get("source", {}).get("original_path")
+        source_name = (
+            "source.py"
+            if plot.get("schema", {}).get("input_format") == "excel"
+            else Path(original or "plot.py").name
+        )
+        staged_source = inside(assets / "inputs", source_name)
+        atomicio.write_bytes(staged_source, plot.get("base_code", plot["code"]).encode("utf-8"))
         atomicio.write_json(
             assets / "context.json",
             {
                 "schema": plot.get("schema") or {},
-                "original_path": plot.get("source", {}).get("original_path"),
-                "original_directory": str(self.store.working_directory(plot["project_id"])),
+                "original_path": str(staged_source),
+                "source_filename": source_name,
+                "original_directory": plot.get("source", {}).get("original_directory")
+                or str(self.store.working_directory(plot["project_id"])),
                 "input_files": plot.get("input_files", []),
                 "legacy_template": not plot.get("execution_version"),
             },

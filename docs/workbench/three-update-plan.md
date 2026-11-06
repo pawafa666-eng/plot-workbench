@@ -110,3 +110,5 @@
 
 - 三批范围和验收计划已整理。
 - 第一批已完成，按用户决定发布为 [1.3.5](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.3.5)，并完成本机更新；实现和验收记录见 [first-update-status.md](first-update-status.md)。第二、三批按本计划保留后续交付范围。
+
+- 第二批中的 Excel 模板输入与复用约定，以及追加的 Codex 浮窗交互，已按用户决定发布为 [1.3.6](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.3.6)，并完成本机更新。范围与验收见 [excel-template-inputs.md](excel-template-inputs.md)；第二批其余换数据样式复用、模板/配色管理和第三批范围继续按计划推进。

@@ -1,6 +1,6 @@
 # Excel 模板输入与 Codex 浮窗
 
-状态：按用户确认的方案实现；用户已决定发布，正在准备 1.3.6 发行及安装核验。属于第二批更新中的本次约定范围，不代表三批计划的第二批全部完成。
+状态：按用户决定发布为 [1.3.6](https://github.com/pawafa666-eng/plot-workbench/releases/tag/v1.3.6)，并已完成本机原目录升级与启动核验。属于第二批更新中的本次约定范围，不代表三批计划的第二批全部完成。
 
 ## 模板输入约定
 
@@ -42,3 +42,11 @@
 - 本地发布相关后端 85 项、前端 175 项通过；真实认证 HTTP 冒烟增加 Excel 生成、重新上传、选择、套用模板和出图。
 - Windows 安装包的原生 WebView2 冒烟增加双文件上传、选区、尺寸确认、保存与重开模板，以及助手浮窗拖动、最小化和结束；由候选安装包在三个缩放档位实际执行。
 - 版本统一为 1.3.6，发行说明见 [v1.3.6.md](releases/v1.3.6.md)。公开前仍核对签名、安装升级和实际发行附件。
+
+## 1.3.6 发行结果（2026-11-06）
+
+- 已公开为稳定最新版，五项附件及软件内更新使用的公开 `latest.json` 均核验一致。
+- 标签 `v1.3.6` 固定在 `75d9ab343acaf8899adfe7fa612fb667d7467700`；[Windows 发行流程](https://github.com/pawafa666-eng/plot-workbench/actions/runs/42146204936) 两项作业均成功，包含真实 Excel 模板与助手浮窗在 100% / 125% / 150% 的原生 WebView2 验证。
+- 安装包 SHA-256：`2bbef18c833bfb1eb5772f94d2b32ae2911aad35555b835a7760eac98119b856`。下载附件、压缩包内安装器、更新签名及与 1.3.1 的公钥连续性均通过核验。
+- 从普通 Explorer 环境将本机 `D:\Plot Workbench` 从 1.3.5 更新到 1.3.6，安装器退出码为 0；主窗口和冻结 sidecar 正常，前端为 `index-Bwr8I6yB`。七项项目、模板、配色与库位置清单在安装前后及重启后保持相同校验值，默认目录未产生第二份程序。
+- 证据保存在 `D:\download\plot-workbench-release\1.3.6` 的 `verification.json`、`ordinary-desktop-update-verified.json`、`ordinary-health-verified.json`、`published-endpoint-verified.json`；发行包和本机证据不入 Git。

@@ -19,7 +19,7 @@ export interface Project { id: string; name: string; path: string; working_direc
 export interface Template {
   id: string; name: string; scope: 'global' | 'project'; project_id?: string; category_id?: string; favorite: boolean
   code: string; data: Snapshot | null; schema: Schema; preview_url?: string; outputs?: FigureOutput[]; revision: number
-  validation_state?: 'pending'
+  validation_state?: 'pending'; description?: string
 }
 export interface Category { id: string; name: string; scope: 'global' | 'project'; project_id?: string }
 export interface Status { root: string; version: string; projects: Project[]; library_confirmed?: boolean }

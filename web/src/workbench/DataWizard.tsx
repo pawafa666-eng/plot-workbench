@@ -93,12 +93,16 @@ function RangeEditor({ title, value, onChange }: { title: string; value: Range[]
     <IconButton label={`删除${title}${index + 1}`} tip={false} disabled={value.length === 1} onClick={() => onChange(value.filter((_, i) => i !== index))}><Trash2 /></IconButton>
   </div>)}</section>
 }
-export function DataTransform({ data, onChange, disabled }: { data: Snapshot; onChange: (data: Snapshot) => void; disabled?: boolean }) {
+export function DataTransform({ data, onChange, disabled, onBusyChange }: { data: Snapshot; onChange: (data: Snapshot) => void; disabled?: boolean; onBusyChange?: (busy: boolean) => void }) {
   const [i, setI] = useState(1); const [j, setJ] = useState(2); const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inFlight = useRef(false)
   async function transform(operation: 'transpose' | 'swap_rows' | 'swap_columns') {
-    setError('')
+    if (disabled || inFlight.current) return
+    inFlight.current = true; setBusy(true); onBusyChange?.(true); setError('')
     try { const result = await post<{ data: Snapshot }>('/data/transform', { data, operation, i, j }); onChange(result.data) }
     catch (e) { setError(errorText(e)) }
+    finally { inFlight.current = false; setBusy(false); onBusyChange?.(false) }
   }
-  return <div className="wb-data-transform"><div className="wb-toolbar"><span className="wb-muted">交换</span><TextInput type="number" min={1} aria-label="第一个位置" value={i} onChange={(e) => setI(Number(e.target.value))} disabled={disabled} /><span>与</span><TextInput type="number" min={1} aria-label="第二个位置" value={j} onChange={(e) => setJ(Number(e.target.value))} disabled={disabled} /><Button disabled={disabled} onClick={() => transform('swap_rows')}>交换行</Button><Button disabled={disabled} onClick={() => transform('swap_columns')}>交换列</Button><Button disabled={disabled} onClick={() => transform('transpose')}><RefreshCw />转置</Button></div>{error && <p className="wb-error" role="alert">{error}</p>}</div>
+  return <div className="wb-data-transform"><div className="wb-toolbar"><span className="wb-muted">交换</span><TextInput type="number" min={1} aria-label="第一个位置" value={i} onChange={(e) => setI(Number(e.target.value))} disabled={disabled || busy} /><span>与</span><TextInput type="number" min={1} aria-label="第二个位置" value={j} onChange={(e) => setJ(Number(e.target.value))} disabled={disabled || busy} /><Button data-wb-transform="swap_rows" disabled={disabled || busy} onClick={() => transform('swap_rows')}>交换行</Button><Button data-wb-transform="swap_columns" disabled={disabled || busy} onClick={() => transform('swap_columns')}>交换列</Button><Button data-wb-transform="transpose" disabled={disabled || busy} onClick={() => transform('transpose')}><RefreshCw />转置</Button></div>{error && <p className="wb-error" role="alert">{error}</p>}</div>
 }

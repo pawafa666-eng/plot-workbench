@@ -668,10 +668,10 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             }
             saved = manager.store.commit_template(payload, job["directory"], template_id)
             return jsonify(_public(saved))
-        allowed = {"name", "favorite", "category_id"}
+        allowed = {"name", "favorite", "category_id", "description"}
         if not body or not set(body) <= allowed:
-            raise WorkbenchError("仅支持修改模板名称、收藏状态或分类")
-        if body.get("category_id") is None:
+            raise WorkbenchError("仅支持修改模板名称、收藏状态、分类或备注")
+        if "category_id" in body and body["category_id"] is None:
             body["category_id"] = "uncategorized"
         return jsonify(_public(manager.store.update_template_metadata(template_id, **body)))
 

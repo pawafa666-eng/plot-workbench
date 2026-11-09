@@ -23,6 +23,15 @@ class WorkbenchError(ValueError):
         self.code, self.status = code, status
 
 
+DESCRIPTION_LIMIT = 20_000
+
+
+def description_of(value):
+    if not isinstance(value, str) or len(value) > DESCRIPTION_LIMIT:
+        raise WorkbenchError("模板备注须为不超过 20000 个字符的文字")
+    return value
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -666,6 +675,9 @@ class WorkbenchStore:
 
     def commit_template(self, payload, artifacts=None, template_id=None):
         with self.lock:
+            description = description_of(
+                payload.get("description", (payload.get("schema") or {}).get("description", ""))
+            )
             scope = payload.get("scope", "global")
             if scope not in ("global", "project") or (
                 scope == "project" and not payload.get("project_id")
@@ -691,9 +703,7 @@ class WorkbenchStore:
                 "code": payload["code"],
                 "data": payload["data"],
                 "schema": payload.get("schema") or DEFAULT_SCHEMA,
-                "description": payload.get(
-                    "description", payload.get("schema", {}).get("description", "")
-                ),
+                "description": description,
                 "outputs": payload.get("outputs") or [{"stem": "figure", "title": "图 1"}],
                 "parent_revision": meta["revision"],
                 "updated_at": now(),
@@ -707,6 +717,7 @@ class WorkbenchStore:
                 {
                     "name": name_of(payload["name"]),
                     "category_id": category,
+                    "description": description,
                     "revision": revision,
                     "updated_at": now(),
                 }
@@ -734,6 +745,8 @@ class WorkbenchStore:
                 if not isinstance(changes["favorite"], bool):
                     raise WorkbenchError("收藏状态必须为布尔值")
                 meta["favorite"] = changes["favorite"]
+            if "description" in changes:
+                meta["description"] = description_of(changes["description"])
             if "category_id" in changes:
                 if changes["category_id"] not in self._library(pid)["categories"]:
                     raise WorkbenchError("分类不属于当前模板库")

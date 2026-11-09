@@ -21,29 +21,66 @@ const KEYWORDS = new Set([
   'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield',
 ])
 
-//: 一行里按优先级扫：注释吃到行尾 > 字符串 > 数字 > 标识符（查关键字表）
-const TOKEN_RE =
-  /(#.*$)|([rbfu]{0,2}(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\b[A-Za-z_]\w*\b)/gm
+// Comments and quoted strings take precedence; triple-quoted strings carry across lines.
+const TOKEN_RE = /(#.*$)|([rRbBuUfF]{0,2}(?:"""|'''))|([rRbBuUfF]{0,2}(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))|(\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\b[A-Za-z_]\w*\b)/g
+type TripleQuote = '"""' | "'''"
 
-/** 把一行源码切成 token 流；案例代码不含跨行字符串，按行切是安全的。 */
-export function tokenizePythonLine(line: string): PyToken[] {
+function closingQuote(line: string, from: number, quote: TripleQuote): number {
+  let at = line.indexOf(quote, from)
+  while (at !== -1) {
+    let slashes = 0
+    for (let i = at - 1; i >= 0 && line[i] === '\\'; i--) slashes++
+    if (slashes % 2 === 0) return at
+    at = line.indexOf(quote, at + 3)
+  }
+  return -1
+}
+
+function tokenizeLine(line: string, current: TripleQuote | null): { tokens: PyToken[]; quote: TripleQuote | null } {
   const out: PyToken[] = []
   let last = 0
+  if (current) {
+    const end = closingQuote(line, 0, current)
+    if (end < 0) return { tokens: [{ kind: 'string', text: line }], quote: current }
+    last = end + 3
+    out.push({ kind: 'string', text: line.slice(0, last) })
+    current = null
+  }
   TOKEN_RE.lastIndex = 0
+  TOKEN_RE.lastIndex = last
   for (let m = TOKEN_RE.exec(line); m; m = TOKEN_RE.exec(line)) {
     if (m.index > last) out.push({ kind: 'plain', text: line.slice(last, m.index) })
-    const [, comment, str, num, word] = m
+    const [, comment, triple, str, num, word] = m
     if (comment != null) out.push({ kind: 'comment', text: comment })
+    else if (triple != null) {
+      const quote = triple.slice(-3) as TripleQuote
+      const end = closingQuote(line, m.index + triple.length, quote)
+      if (end < 0) { out.push({ kind: 'string', text: line.slice(m.index) }); return { tokens: out, quote } }
+      last = end + 3
+      out.push({ kind: 'string', text: line.slice(m.index, last) })
+      TOKEN_RE.lastIndex = last
+      continue
+    }
     else if (str != null) out.push({ kind: 'string', text: str })
     else if (num != null) out.push({ kind: 'number', text: num })
     else out.push({ kind: KEYWORDS.has(word!) ? 'keyword' : 'plain', text: word! })
     last = m.index + m[0].length
   }
   if (last < line.length) out.push({ kind: 'plain', text: line.slice(last) })
-  return out
+  return { tokens: out, quote: null }
+}
+
+/** Tokenize an independent line; full documents should use tokenizePython. */
+export function tokenizePythonLine(line: string): PyToken[] {
+  return tokenizeLine(line, null).tokens
 }
 
 /** 整段源码 → 每行一组 token（渲染方配行号用）。 */
 export function tokenizePython(source: string): PyToken[][] {
-  return source.replace(/\n$/, '').split('\n').map(tokenizePythonLine)
+  let quote: TripleQuote | null = null
+  return source.replace(/\n$/, '').split('\n').map((line) => {
+    const result = tokenizeLine(line, quote)
+    quote = result.quote
+    return result.tokens
+  })
 }

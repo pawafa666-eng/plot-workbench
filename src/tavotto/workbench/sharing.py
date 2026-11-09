@@ -22,6 +22,7 @@ from . import data as table_data
 from .palettes import validate_colors
 from .store import (
     DEFAULT_SCHEMA,
+    DESCRIPTION_LIMIT,
     WorkbenchError,
     _document_backups,
     _restore_documents,
@@ -226,7 +227,7 @@ def read_package(raw):
                     item["category"] = _text(item["category"])
                 if (
                     not isinstance(item.get("description", ""), str)
-                    or len(item.get("description", "")) > 20_000
+                    or len(item.get("description", "")) > DESCRIPTION_LIMIT
                 ):
                     raise _invalid("模板说明过长或无效")
                 preview = item.get("preview")

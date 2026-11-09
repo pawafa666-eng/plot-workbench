@@ -34,4 +34,14 @@ describe('pythonHighlight', () => {
     expect(t.find((x) => x.kind === 'comment')).toBeUndefined()
     expect(t.find((x) => x.kind === 'string')?.text).toBe('"#b03a2e"')
   })
+
+  it('preserves and colors multiline docstrings without consuming later code', () => {
+    const source = '"""说明\n# still a string\nend"""\nimport math  # real comment\n'
+    const lines = tokenizePython(source)
+    expect(lines.map((line) => line.map((t) => t.text).join(''))).toEqual(source.replace(/\n$/, '').split('\n'))
+    expect(lines[1][0].kind).toBe('string')
+    expect(lines[2][0].kind).toBe('string')
+    expect(lines[3].find((t) => t.text === 'import')?.kind).toBe('keyword')
+    expect(lines[3].find((t) => t.kind === 'comment')?.text).toBe('# real comment')
+  })
 })

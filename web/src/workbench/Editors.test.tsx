@@ -38,6 +38,73 @@ it('requires a fresh verified run before saving a shared template draft', async 
   expect(document.querySelector<HTMLButtonElement>('[data-wb-template-run]')!.disabled).toBe(false)
 })
 
+it('allows a note on a legacy template without Excel or a new run', async () => {
+  const template = { id: 'legacy', name: '旧模板', scope: 'global' as const, favorite: false, code: 'print(1)', data: null, schema: DEFAULT_SCHEMA, revision: 1 }
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={template} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
+  const note = document.querySelector<HTMLTextAreaElement>('[aria-label="模板备注"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(note, '旧模板备注'); note.dispatchEvent(new Event('input', { bubbles: true })) })
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(false)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.click())
+  const request = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/templates/legacy') && init?.method === 'PATCH')!
+  expect(JSON.parse(String(request[1]?.body))).toEqual({ name: '旧模板', category_id: 'uncategorized', description: '旧模板备注' })
+})
+
+it('edits long template notes and saves metadata without running or changing the category', async () => {
+  const template = { id: 'notes', name: '模板', scope: 'global' as const, category_id: 'category-a', favorite: false, code: 'import math', data: inputData, schema: templateSchema, revision: 1, description: '短备注' }
+  const onSaved = vi.fn()
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={template} categories={[]} onBack={() => {}} onSaved={onSaved} /></TooltipProvider>))
+  const note = document.querySelector<HTMLTextAreaElement>('[aria-label="模板备注"]')!
+  expect(note.value).toBe('短备注')
+  expect(document.querySelector('[data-wb-note-expand]')).toBeNull()
+  Object.defineProperty(note, 'clientHeight', { configurable: true, value: 40 })
+  Object.defineProperty(note, 'scrollHeight', { configurable: true, get: () => note.value.length > 50 ? 100 : 40 })
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(note, '长备注'.repeat(60)); note.dispatchEvent(new Event('input', { bubbles: true })) })
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-note-expand]')!.click())
+  const full = document.querySelector<HTMLTextAreaElement>('[aria-label="完整模板备注"]')!
+  expect(full.value).toBe('长备注'.repeat(60))
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(full, '最终备注'); full.dispatchEvent(new Event('input', { bubbles: true })) })
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[data-dialog="workbench-template-notes"] button')].find((button) => button.textContent === '完成')!.click())
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.click())
+  const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/templates/notes') && init?.method === 'PATCH')!
+  expect(JSON.parse(String(call[1]?.body))).toEqual({ name: '模板', category_id: 'category-a', description: '最终备注' })
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/templates/validate'))).toBe(false)
+  expect(onSaved).toHaveBeenCalled()
+})
+
+it('opens the data in a modal and retains transformations while invalidating the render', async () => {
+  const template = { id: 'data', name: '模板', scope: 'global' as const, favorite: false, code: 'import math', data: inputData, schema: templateSchema, revision: 1 }
+  const transposed = { ...inputData, values: [[1, 2], [2, 4]], columns: ['a', 'b'] }
+  vi.mocked(fetch).mockImplementation(async (input) => ({ ok: true, json: async () => String(input).endsWith('/data/transform') ? { data: transposed } : {} } as Response))
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={template} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
+  const show = [...document.querySelectorAll('button')].find((button) => button.textContent?.startsWith('查看数据'))!
+  await act(async () => show.click())
+  expect(document.querySelector('[data-dialog="workbench-data-preview"] [data-wb-data-preview]')).not.toBeNull()
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-transform="transpose"]')!.click())
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/data/transform'))!
+  expect(JSON.parse(String(request[1]?.body)).operation).toBe('transpose')
+  expect(document.querySelector('[data-dialog="workbench-data-preview"]')?.textContent).toContain('a')
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[data-dialog="workbench-data-preview"] button')].find((button) => button.textContent === '完成')!.click())
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-template-save]')!.disabled).toBe(true)
+  expect(document.querySelector('[data-wb-template-state]')?.textContent).toContain('未运行')
+})
+
+it('keeps a data transformation in the dialog until the request finishes', async () => {
+  const template = { id: 'slow-data', name: '模板', scope: 'global' as const, favorite: false, code: 'import math', data: inputData, schema: templateSchema, revision: 1 }
+  let finish!: (response: Response) => void
+  vi.mocked(fetch).mockImplementation(async (input) => String(input).endsWith('/data/transform') ? new Promise<Response>((resolve) => { finish = resolve }) : { ok: true, json: async () => ({}) } as Response)
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={template} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent?.startsWith('查看数据'))!.click())
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-transform="transpose"]')!.click())
+  const dialog = document.querySelector('[data-dialog="workbench-data-preview"]')!
+  expect(dialog.getAttribute('aria-busy')).toBe('true')
+  expect(dialog.querySelector('[data-dialog-close]')).toBeNull()
+  expect([...dialog.querySelectorAll('button')].find((button) => button.textContent === '完成')!.disabled).toBe(true)
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-transform="transpose"]')!.disabled).toBe(true)
+  await act(async () => { finish({ ok: true, json: async () => ({ data: inputData }) } as Response); await Promise.resolve() })
+  expect(dialog.getAttribute('aria-busy')).toBeNull()
+  expect([...dialog.querySelectorAll('button')].find((button) => button.textContent === '完成')!.disabled).toBe(false)
+})
+
 it('selects every saved figure and exports the selected stem', async () => {
   localStorage.setItem('workbench.exportDirectory', 'D:\\figure')
   await renderPlot()

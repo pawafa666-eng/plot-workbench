@@ -42,5 +42,6 @@ export function useRenderJob() {
     try { await post(`/jobs/${activeJob.current}/cancel`) }
     catch (err) { setError(errorText(err)) }
   }
-  return { job, error, busy: starting || job?.status === 'running', start, cancel }
+  function clearResult() { setJob(null); setError('') }
+  return { job, error, busy: starting || job?.status === 'running', start, cancel, clearResult }
 }

@@ -25,7 +25,7 @@ export function DataTable({ data, caption = '数据预览' }: { data: Snapshot |
       <tbody>{data.values.slice(0, 50).map((row, i) => <tr key={i}><th className="wb-row-number">{data.row_sources?.[i] ?? i + 1}</th>{row.slice(0, 50).map((v, j) => <td key={j} title={cellText(v)}>{cellText(v)}</td>)}</tr>)}</tbody></table></div>
   </section>
 }
-export function DataWizard({ onClose, onImport, initialFile = null, excelOnly = false }: { initialFile?: File | null; excelOnly?: boolean; onClose: () => void; onImport: (data: Snapshot) => void }) {
+export function DataWizard({ onClose, onImport, initialFile = null, excelOnly = false, plotInput = false }: { initialFile?: File | null; excelOnly?: boolean; plotInput?: boolean; onClose: () => void; onImport: (data: Snapshot) => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(initialFile)
   const [sheet, setSheet] = useState('')
@@ -69,7 +69,10 @@ export function DataWizard({ onClose, onImport, initialFile = null, excelOnly = 
     return () => { active = false; clearTimeout(timer) }
   }, [tableId, raw, rows, columns, header])
   const isCsv = file ? /\.csv$/i.test(file.name) : false
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }} title="导入表格数据" description={excelOnly ? '选择工作表及行列；选区将生成为独立 data.xlsx，表头不计入行数。' : 'Excel / CSV · 独立选择行列范围'} width={1120} height="720px" chrome="shell" anchor="workbench-data-import" footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={!selected || !selected.row_count || !selected.column_count || busy || !!error} data-wb-import-confirm onClick={() => { if (selected) onImport(selected) }}>导入所选数据</Button></>}>
+  const description = plotInput
+    ? '确认后，脚本将在选区目录运行。可读取 data.xlsx 的 Data 工作表。普通脚本也可按上传的 .xlsx 文件名和所选工作表名读取。'
+    : excelOnly ? '选择工作表及行列；选区将生成为独立 data.xlsx，表头不计入行数。' : 'Excel / CSV · 独立选择行列范围'
+  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }} title={plotInput ? '使用 Excel 选区' : '导入表格数据'} description={description} width={1120} height="720px" chrome="shell" anchor="workbench-data-import" footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={!selected || !selected.row_count || !selected.column_count || busy || !!error} data-wb-import-confirm onClick={() => { if (selected) onImport(selected) }}>{plotInput ? '使用所选数据' : '导入所选数据'}</Button></>}>
     <div className="wb-data-wizard">
       <aside className="wb-data-settings">
         <input ref={inputRef} type="file" accept={excelOnly ? '.xlsx,.xls' : '.xlsx,.xls,.csv'} hidden data-wb-data-file onChange={(e) => { setFile(e.target.files?.[0] ?? null); setSheet(''); setRows([{ start: 0, end: 0 }]); setColumns([{ start: 0, end: 0 }]) }} />

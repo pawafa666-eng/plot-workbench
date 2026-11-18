@@ -56,6 +56,24 @@ def test_models_come_from_codex_config(tmp_path, monkeypatch):
     assert "max" in caps["efforts"]
 
 
+def test_codex_picker_uses_the_resolved_cli_catalog_over_stale_config(tmp_path, monkeypatch):
+    queried = []
+
+    def catalog(argv):
+        queried.append(argv)
+        return [
+            {"model": "real-sol", "isDefault": True, "hidden": False},
+            {"model": "real-luna", "hidden": False},
+            {"model": "hidden-model", "hidden": True},
+        ]
+
+    monkeypatch.setattr(ai_agents.CodexAgent, "_model_catalog", staticmethod(catalog))
+    caps = _codex_caps(tmp_path, monkeypatch, 'model = "stale-sol"\n')
+    assert queried == [["/usr/bin/codex"]]
+    assert caps["models"] == ["real-sol", "real-luna"]
+    assert caps["default_model"] == caps["fallback_model"] == "real-sol"
+
+
 def test_profiles_listed_after_the_active_model(tmp_path, monkeypatch):
     caps = _codex_caps(
         tmp_path,

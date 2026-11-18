@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -79,6 +81,7 @@ class ModelCapabilities:
     default_model: str | None = None
     efforts: list[str] = field(default_factory=list)
     default_effort: str | None = None
+    fallback_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,9 @@ class RunContext:
     #: 第三方接口的注入（由 ai_bridge 经 ai_providers 算好）
     endpoint_args: list[str] = field(default_factory=list)
     endpoint_env: dict[str, str] = field(default_factory=dict)
+    reference_image: str | None = None
+    output_schema: str | None = None
+    output_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -397,6 +403,9 @@ class AgentDefinition:
     def model_capabilities(self) -> ModelCapabilities:
         return ModelCapabilities()
 
+    def active_model_capabilities(self, argv: list[str]) -> ModelCapabilities:
+        return self.model_capabilities()
+
     # -- 就绪 --------------------------------------------------------------
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """无副作用就绪检查。**默认什么都不做**——不支持就老实说 unknown。
@@ -529,6 +538,97 @@ class CodexAgent(AgentDefinition):
             default_effort=cfg["default_effort"] or "medium",
         )
 
+    @staticmethod
+    def _model_catalog(argv: list[str]) -> list[dict]:
+        # Query the same executable and login context that will run requests.
+        # Close stdin after the reply so the disposable server exits itself.
+        try:
+            with subprocess.Popen(
+                [*argv, "app-server"],
+                env=spawn_env(argv[0]),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            ) as proc:
+                lines = queue.Queue()
+
+                def read():
+                    for line in proc.stdout:
+                        lines.put(line)
+                    lines.put(None)
+
+                threading.Thread(target=read, daemon=True).start()
+                deadline = time.monotonic() + 6
+
+                def send(message):
+                    proc.stdin.write(json.dumps(message) + "\n")
+                    proc.stdin.flush()
+
+                def receive(request_id):
+                    while (remaining := deadline - time.monotonic()) > 0:
+                        line = lines.get(timeout=remaining)
+                        if line is None:
+                            return {}
+                        try:
+                            message = json.loads(line)
+                        except ValueError:
+                            continue
+                        if isinstance(message, dict) and message.get("id") == request_id:
+                            result = message.get("result")
+                            return result if isinstance(result, dict) else {}
+                    return {}
+
+                try:
+                    send(
+                        {
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {"clientInfo": {"name": "plot-workbench", "version": "1.0"}},
+                        }
+                    )
+                    if not receive(1):
+                        return []
+                    send({"method": "initialized"})
+                    send({"id": 2, "method": "model/list", "params": {"limit": 100}})
+                    data = receive(2).get("data")
+                    return data if isinstance(data, list) else []
+                finally:
+                    proc.stdin.close()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+        except (OSError, ValueError, queue.Empty):
+            return []
+
+    def active_model_capabilities(self, argv: list[str]) -> ModelCapabilities:
+        configured = self.model_capabilities()
+        models = {}
+        for item in self._model_catalog(argv):
+            if not isinstance(item, dict) or item.get("hidden"):
+                continue
+            model = item.get("model")
+            if isinstance(model, str) and model:
+                models[model] = item
+        if not models:
+            return configured
+        recommended = next((name for name, item in models.items() if item.get("isDefault")), None)
+        default = configured.default_model
+        fallback = (
+            (recommended or next(iter(models))) if default and default not in models else None
+        )
+        return ModelCapabilities(
+            models=list(models),
+            default_model=fallback or default or recommended,
+            efforts=configured.efforts,
+            default_effort=configured.default_effort,
+            fallback_model=fallback,
+        )
+
     def readiness(self, argv: list[str]) -> ReadinessResult:
         """`codex login status` —— 官方的本地状态子命令，只读 auth 文件。
 
@@ -556,7 +656,7 @@ class CodexAgent(AgentDefinition):
             ctx.cwd,
             "--json",
             "--sandbox",
-            "workspace-write",
+            "read-only" if ctx.output_schema else "workspace-write",
             "--skip-git-repo-check",
         ]
         cmd += ctx.endpoint_args
@@ -564,6 +664,17 @@ class CodexAgent(AgentDefinition):
             cmd += ["-m", ctx.model]
         if ctx.effort:
             cmd += ["-c", f"model_reasoning_effort={ctx.effort}"]
+        if ctx.output_schema:
+            cmd = [*ctx.argv, "--ask-for-approval", "never", *cmd[len(ctx.argv) :]]
+            cmd += [
+                "--ephemeral",
+                "--output-schema",
+                ctx.output_schema,
+                "--output-last-message",
+                ctx.output_message,
+                "--image",
+                ctx.reference_image,
+            ]
         # The bridge supplies a finite UTF-8 document, never the parent's stdin.
         return SpawnSpec(cmd + ["-"], dict(ctx.endpoint_env), stdin_text=ctx.prompt)
 

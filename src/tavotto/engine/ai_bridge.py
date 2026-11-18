@@ -140,7 +140,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
     installed = res.argv is not None
     enabled = _effective_enabled(saved, installed)
 
-    caps = agent.model_capabilities() if installed else ai_agents.ModelCapabilities()
+    caps = agent.active_model_capabilities(res.argv) if installed else ai_agents.ModelCapabilities()
     models = list(caps.models)
     default_model = caps.default_model
 
@@ -177,6 +177,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         "detection_source": res.source,
         "models": models,
         "default_model": default_model,
+        "fallback_model": None if endpoint_backed else caps.fallback_model,
         "efforts": list(caps.efforts) if agent.supports_effort_selection else [],
         "default_effort": caps.default_effort if agent.supports_effort_selection else None,
         "endpoint": ai_providers.public(endpoint) if endpoint else None,
@@ -521,6 +522,10 @@ def _cmd(
     model: str | None = None,
     effort: str | None = None,
     endpoint: dict | None = None,
+    *,
+    reference_image: str | None = None,
+    output_schema: str | None = None,
+    output_message: str | None = None,
 ) -> ai_agents.SpawnSpec:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。"""
@@ -538,9 +543,60 @@ def _cmd(
             effort=effort,
             endpoint_args=list(extra_args),
             endpoint_env=dict(extra_env),
+            reference_image=reference_image,
+            output_schema=output_schema,
+            output_message=output_message,
         )
     )
     return spec
+
+
+def _spawn(spec, cwd, stdout, stderr, prompt_dir):
+    cmd, extra_env = spec
+    env = _spawn_env(cmd[0], extra_env)
+    with ExitStack() as inputs:
+        stdin = subprocess.DEVNULL
+        stdin_text = getattr(spec, "stdin_text", None)
+        if stdin_text is not None:
+            # Bounded UTF-8 with EOF, independent of the desktop parent pipe.
+            payload = inputs.enter_context(tempfile.TemporaryFile(dir=prompt_dir))
+            payload.write(stdin_text.encode("utf-8"))
+            payload.seek(0)
+            stdin = payload
+        return subprocess.Popen(
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+            start_new_session=os.name != "nt",
+        )
+
+
+def spawn_structured_codex(*, cwd, prompt, model, image, schema, output, log):
+    caps = require_usable("codex")
+    endpoint = ai_providers.resolve("codex")
+    spec = _cmd(
+        "codex",
+        prompt,
+        str(cwd),
+        model=model or caps.get("fallback_model"),
+        endpoint=endpoint,
+        reference_image=str(image),
+        output_schema=str(schema),
+        output_message=str(output),
+    )
+    return _spawn(spec, cwd, log, log, cwd)
+
+
+def terminate_structured_codex(process):
+    _terminate({"proc": process})
 
 
 def _classify(agent_id: str, line: str, st: dict) -> list[tuple[str, str]]:
@@ -630,7 +686,9 @@ def run(
     样——注入而不是回头 import，边界与 `project_refresh.RefreshSink` 相同。
     它的结局进 `ai.done.refresh` 与历史库的 `refresh` 列，见 `refresh_outcome()`。
     """
-    require_usable(agent)
+    caps = require_usable(agent)
+    if model is None and endpoint_id is None and isinstance(caps, dict):
+        model = caps.get("fallback_model")
     script_path = Path(figures_dir) / script
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
@@ -672,7 +730,7 @@ def run(
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
         spawn = _cmd(agent, prompt, figures_dir, model=model, effort=effort, endpoint=endpoint)
-        cmd, extra_env = spawn
+        cmd, _ = spawn
         # 仍在 argv 的提示词按**值**从日志里摘掉（claude 在 `-p` 后面；
         # stdin 提示词本来就不在 argv）。按 agent 写死下标那种做法，加第三个 Agent 时
         # 会静默把用户的提示词整条写进日志。
@@ -681,34 +739,7 @@ def run(
             " ".join("<prompt>" if part == prompt else part for part in cmd),
             endpoint["label"] if endpoint else "CLI 默认",
         )
-        # cmd[0] 是 CLI 可执行（或 node），PATH 增强按它算。
-        env = _spawn_env(cmd[0], extra_env)
-        with ExitStack() as inputs:
-            stdin = subprocess.DEVNULL
-            stdin_text = getattr(spawn, "stdin_text", None)
-            if stdin_text is not None:
-                # Finite input with EOF; never inherit the sidecar's parent-
-                # death pipe or provide an interactive input channel.
-                payload = inputs.enter_context(
-                    tempfile.TemporaryFile(dir=SNAP_DIR, prefix=".prompt-", suffix=".tmp")
-                )
-                payload.write(stdin_text.encode("utf-8"))
-                payload.seek(0)
-                stdin = payload
-            proc = subprocess.Popen(
-                cmd,
-                cwd=figures_dir,
-                env=env,
-                stdin=stdin,
-                stdout=subprocess.PIPE,
-                stderr=stderr_log,
-                text=True,
-                bufsize=1,
-                encoding="utf-8",
-                errors="replace",
-                creationflags=CREATE_NO_WINDOW,
-                start_new_session=os.name != "nt",
-            )
+        proc = _spawn(spawn, figures_dir, subprocess.PIPE, stderr_log, SNAP_DIR)
         sess = {
             "id": sid,
             "agent": agent,

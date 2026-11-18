@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import re
 import shutil
@@ -14,16 +15,38 @@ import subprocess
 import threading
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from tavotto.engine import atomicio, config, patchspec, pool, runtime, workdir
+from tavotto.engine.exportreq import check_filename
 
 from . import data as data_module
 from .assistant import AssistantService
+from .imitation import TemplateImitation
 from .store import WorkbenchError, inside, read_json
 
 TIMEOUT = 60
 _MODULE_ROOT = Path(__file__).resolve().parent
+_windows_name_reserved = getattr(
+    ntpath, "isreserved", lambda name: PureWindowsPath(name).is_reserved()
+)
+
+
+def _excel_alias(data):
+    """Use the selected upload's names as local inputs for a standalone script."""
+    source = data.get("source") or {}
+    filename, sheet = source.get("filename"), source.get("sheet")
+    if (
+        not isinstance(filename, str)
+        or Path(filename).suffix.lower() != ".xlsx"
+        or check_filename(filename) is not None
+        or _windows_name_reserved(filename)
+        or not isinstance(sheet, str)
+        or not 1 <= len(sheet) <= 31
+        or re.search(r"[\\/*?:\[\]\x00-\x1f]", sheet)
+    ):
+        return None
+    return {"filename": filename, "sheet": sheet}
 
 
 def fingerprint(payload):
@@ -137,6 +160,7 @@ class RenderService:
         self.root = Path(jobs_root or config.data_dir() / "workbench-jobs").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.imitation = TemplateImitation(self)
         self.jobs = {}
         self.latest = {}
         self.sessions = {}
@@ -144,7 +168,7 @@ class RenderService:
         self.assistant = AssistantService(self.root / "assistant")
         self.closed = False
 
-    def render(self, payload, plot_id=None):
+    def render(self, payload, plot_id=None, *, imitation_root=None):
         if plot_id:
             self.store.assert_editable(plot_id)
         if not isinstance(payload.get("code"), str) or not payload["code"].strip():
@@ -171,7 +195,7 @@ class RenderService:
             working_directory = str(self.store.working_directory(plot["project_id"]))
             directory = inside(self.store.project_dir(plot["project_id"]), f"cache/runs/{job_id}")
         else:
-            directory = inside(self.root, job_id)
+            directory = inside(imitation_root or self.root, job_id)
         if payload.get("original_path") and schema.get("input_format") != "excel" and not snapshot:
             original = Path(payload["original_path"]).expanduser()
             original = inside(original.parent, original.name)
@@ -182,6 +206,11 @@ class RenderService:
         shutil.copy2(_MODULE_ROOT / "data.py", directory / "data_helper.py")
         shutil.copy2(_MODULE_ROOT / "execution.py", directory / "execution.py")
         atomicio.write_bytes(directory / "base.py", payload["code"].encode("utf-8"))
+        excel_alias = (
+            _excel_alias(payload["data"])
+            if plot_id and not payload.get("template_id") and schema.get("input_format") == "excel"
+            else None
+        )
         atomicio.write_json(
             directory / "input.json",
             {
@@ -190,6 +219,7 @@ class RenderService:
                 "data_helper": str(directory / "data_helper.py"),
                 "working_directory": working_directory or str(directory),
                 "original_path": payload.get("original_path"),
+                "excel_alias": excel_alias,
                 **(
                     {
                         "original_directory": working_directory,
@@ -205,6 +235,7 @@ class RenderService:
         job = {
             "id": job_id,
             "status": "running",
+            "imitation_root": imitation_root,
             "plot_id": plot_id,
             "payload": payload,
             "requested_payload": copy.deepcopy(payload),
@@ -303,6 +334,7 @@ class RenderService:
             job["environment"] = environment
             job["outputs"] = result.get("outputs", [{"stem": "figure", "title": "图 1"}])
             job["input_files"] = result.get("input_files", [])
+            job["workbook_read"] = result.get("workbook_read", False)
             job["fingerprint"] = fingerprint(job["payload"])
             job["result"] = {
                 "run_id": job["id"],
@@ -334,6 +366,26 @@ class RenderService:
                 _terminate(process)
             if job["cancel"].is_set():
                 job["status"] = "cancelled"
+            if job.get("discard_imitation"):
+                self.discard_imitation_run(job["id"])
+
+    def discard_imitation_run(self, job_id):
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if not job or not job["imitation_root"]:
+                return
+            if job["status"] == "running":
+                job["discard_imitation"] = True
+                job["cancel"].set()
+                return
+            directory = Path(job["directory"])
+            if (
+                directory.parent == job["imitation_root"]
+                and directory.name == job_id
+                and directory.is_dir()
+            ):
+                shutil.rmtree(directory)
+            self.jobs.pop(job_id, None)
 
     def job(self, job_id):
         job = self.jobs.get(job_id)
@@ -1124,8 +1176,9 @@ def main():
 
     def close(self):
         self.closed = True
+        self.imitation.close()
         self.assistant.close()
-        for job in self.jobs.values():
+        for job in list(self.jobs.values()):
             job["cancel"].set()
         for sid in list(self.sessions):
             self.cancel_session(sid)

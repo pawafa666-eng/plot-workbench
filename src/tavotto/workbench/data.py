@@ -393,7 +393,7 @@ def require_excel_data(snapshot):
         raise ValueError("模板数据必须来自外部导入的 Excel 文件")
 
 
-def workbook_bytes(snapshot):
+def workbook_bytes(snapshot, *, sheet_names=("Data",)):
     """Materialize the exact selected values; child only, never Flask imports."""
     from openpyxl import Workbook
 
@@ -401,19 +401,20 @@ def workbook_bytes(snapshot):
     if not 1 <= snapshot["row_count"] <= 1_048_575 or not 1 <= snapshot["column_count"] <= 16_384:
         raise ValueError("选区尺寸超出 Excel 范围或为空")
     book = Workbook(write_only=True)
-    sheet = book.create_sheet("Data")
     from openpyxl.cell import WriteOnlyCell
 
-    for row in [snapshot["columns"], *snapshot["values"]]:
-        cells = []
-        for encoded in row:
-            value = None if _missing(encoded) else _decode_cell(encoded)
-            cell = WriteOnlyCell(sheet, value=value)
-            # Literal Excel strings (including '=...') remain data, not formulas.
-            if isinstance(value, str):
-                cell.data_type = "s"
-            cells.append(cell)
-        sheet.append(cells)
+    for name in sheet_names:
+        sheet = book.create_sheet(name)
+        for row in [snapshot["columns"], *snapshot["values"]]:
+            cells = []
+            for encoded in row:
+                value = None if _missing(encoded) else _decode_cell(encoded)
+                cell = WriteOnlyCell(sheet, value=value)
+                # Literal Excel strings (including '=...') remain data, not formulas.
+                if isinstance(value, str):
+                    cell.data_type = "s"
+                cells.append(cell)
+            sheet.append(cells)
     output = io.BytesIO()
     book.save(output)
     return output.getvalue()

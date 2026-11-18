@@ -23,6 +23,7 @@ from .codeview import history_comparison
 from .data_process import run_operation
 from .exportfiles import save_export
 from .history import list_history, restore_copy, revision_record
+from .imitation import MAX_IMAGE
 from .palettes import PaletteStore
 from .recovery import MAX_DRAFT_BYTES, DraftStore
 from .rendering import RenderService
@@ -82,6 +83,8 @@ class WorkbenchManager:
                 not session.get("closed") for session in self.service.sessions.values()
             ):
                 raise WorkbenchError("请先完成或取消绘图与图内编辑", "library_busy", 409)
+            if self.service.imitation.current():
+                raise WorkbenchError("请先应用或删除当前仿图任务", "library_busy", 409)
             store, palettes = WorkbenchStore(target), PaletteStore(target)
             service = RenderService(store)
             try:
@@ -617,6 +620,45 @@ def create_blueprint(manager: WorkbenchManager | None = None) -> Blueprint:
             }
         )
         return jsonify({"job_id": job_id})
+
+    @bp.get("/imitation")
+    def current_imitation():
+        return jsonify({"task": manager.service.imitation.current()})
+
+    @bp.post("/imitation")
+    def start_imitation():
+        upload = request.files.get("image")
+        if not upload:
+            raise WorkbenchError("请上传一张参考图")
+        raw = upload.stream.read(MAX_IMAGE + 1)
+        with manager.lock:
+            return jsonify(
+                manager.service.imitation.start(
+                    raw,
+                    model=request.form.get("model") or None,
+                    scope=request.form.get("scope", "global"),
+                    project_id=request.form.get("project_id") or None,
+                    category_id=request.form.get("category_id") or None,
+                )
+            )
+
+    @bp.get("/imitation/<task_id>/reference")
+    def imitation_reference(task_id):
+        return send_file(
+            io.BytesIO(manager.service.imitation.reference(task_id)), mimetype="image/png"
+        )
+
+    @bp.post("/imitation/<task_id>/adjust")
+    def adjust_imitation(task_id):
+        return jsonify(manager.service.imitation.adjust(task_id, _need(_body(), "prompt")))
+
+    @bp.post("/imitation/<task_id>/apply")
+    def apply_imitation(task_id):
+        return jsonify(_public(manager.service.imitation.apply(task_id)))
+
+    @bp.delete("/imitation/<task_id>")
+    def delete_imitation(task_id):
+        return jsonify({"task": manager.service.imitation.delete(task_id)})
 
     @bp.post("/templates")
     def create_template():

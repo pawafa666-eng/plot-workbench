@@ -31,6 +31,21 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); vi.unstubAllGlobals(); document.body.innerHTML = '' })
 async function renderPlot(initial: Plot = plot) { await act(async () => root.render(<TooltipProvider><PlotEditor initial={initial} templates={[]} onChanged={() => {}} onBack={() => {}} /></TooltipProvider>)) }
 
+it('can restore script-directory inputs after using an Excel selection', async () => {
+  const originalPath = 'D:\\project\\code.py'
+  await renderPlot({ ...plot, data: inputData, schema: templateSchema, source: { kind: 'external', original_path: originalPath } })
+  const inputMode = document.querySelector('[data-wb-input-mode]')
+  expect(inputMode?.textContent).toBe('输入：Excel 选区')
+  expect(document.querySelector('[data-wb-import-data]')?.textContent).toBe('更换 Excel 选区')
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-restore-input]')!.click())
+  expect(inputMode?.textContent).toBe('输入：原脚本目录')
+  expect(document.querySelector('[data-wb-import-data]')?.textContent).toBe('改用 Excel 选区')
+  expect(document.querySelector<HTMLButtonElement>('[data-wb-export]')!.disabled).toBe(true)
+  await act(async () => document.querySelector<HTMLButtonElement>('[data-wb-run]')!.click())
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/render'))!
+  expect(JSON.parse(String(request[1]?.body))).toEqual({ code: plot.code, original_path: originalPath, data: null, schema: DEFAULT_SCHEMA })
+})
+
 it('requires a fresh verified run before saving a shared template draft', async () => {
   await act(async () => root.render(<TooltipProvider><TemplateEditor initial={{ id: 'imported', name: 'Shared', scope: 'global', favorite: false, code: 'print(1)', data: inputData, schema: templateSchema, revision: 0, validation_state: 'pending' }} categories={[]} onBack={() => {}} onSaved={() => {}} /></TooltipProvider>))
   expect(document.querySelector('[data-template-pending]')).not.toBeNull()
@@ -163,7 +178,8 @@ it('retains every output in template previews', async () => {
 })
 
 it('opens Codex assistance from the template editor without running or saving the template', async () => {
-  await act(async () => root.render(<TooltipProvider><TemplateEditor categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
+  const saved = { id: 'existing', name: '已有模板', scope: 'global' as const, code: plot.code, data: inputData, schema: templateSchema, favorite: false, revision: 1 }
+  await act(async () => root.render(<TooltipProvider><TemplateEditor initial={saved} categories={[]} onSaved={() => {}} onBack={() => {}} /></TooltipProvider>))
   const assistant = document.querySelector<HTMLButtonElement>('[data-wb-template-assistant]')
   expect(assistant).toBeTruthy()
   await act(async () => assistant!.click())

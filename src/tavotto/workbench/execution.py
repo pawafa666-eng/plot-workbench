@@ -69,12 +69,23 @@ def execute(
     real_open, real_io_open = builtins.open, io.open
     remaps = {}
     if input_directory:
+        input_root = Path(input_directory).resolve()
+        excel = schema.get("input_format") == "excel"
         for item in input_files:
             relative = Path(item["path"])
-            destination = (Path(input_directory) / relative).resolve()
-            if not destination.is_relative_to(Path(input_directory).resolve()):
+            destination = (input_root / relative).resolve()
+            if not destination.is_relative_to(input_root):
                 raise ValueError("数据快照路径无效")
-            original = Path(original_directory or root) / relative
+            if excel:
+                # The selected Excel's alternate name applies only to a read
+                # beside source.py, consistently in the run and in replay.
+                if not (name := item.get("read_as")):
+                    continue
+                original = (root / name).resolve()
+                if original.parent != root:
+                    raise ValueError("Excel 选区文件名无效")
+            else:
+                original = Path(original_directory or root) / relative
             remaps[os.path.normcase(str(original.resolve()))] = str(destination)
 
     def mapped(file, mode):

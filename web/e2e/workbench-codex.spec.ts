@@ -30,6 +30,7 @@ function deterministicCodex(testInfo: TestInfo): Record<string, string> {
   writeFileSync(path.join(directory, 'sitecustomize.py'), `from pathlib import Path
 import copy
 import difflib
+import json
 import time
 import uuid
 from tavotto.engine import ai_bridge
@@ -67,8 +68,30 @@ def _run(*, script, figures_dir, **kwargs):
     }
     return sid
 
+class _Structured:
+    def __init__(self):
+        self.end = time.monotonic() + 1.3
+    def poll(self):
+        return 0 if time.monotonic() >= self.end else None
+    def wait(self):
+        return 0
+
+def _structured(*, prompt, output, **kwargs):
+    revised = "图例放在右下" in prompt
+    code = ("from pathlib import Path\\nimport pandas as pd\\nimport matplotlib.pyplot as plt\\n"
+            "rows = pd.read_excel(Path(__file__).with_name('data.xlsx'), sheet_name='Data')\\n"
+            "fig, ax = plt.subplots()\\nax.plot(rows['Time'], rows['Level'], label='Observed')\\n"
+            + ("ax.legend(loc='lower right')\\n" if revised else "ax.legend()\\n"))
+    output.write_text(json.dumps({
+        "name": "Verified reference", "description": "Synthetic sample data for reuse",
+        "code": code, "headers": ["Time", "Level"], "values": [[0,2],[1,4],[2,5]],
+        "rows": {"mode":"variable", "value":2}, "columns": {"mode":"fixed", "value":2},
+    }), encoding="utf-8")
+    return _Structured()
+
 ai_bridge.capabilities = _capabilities
 ai_bridge.run = _run
+ai_bridge.spawn_structured_codex = _structured
 _original_get = ai_bridge.get
 _seen = {}
 def _get(sid):
@@ -97,6 +120,7 @@ async function get<T>(request: APIRequestContext, baseURL: string, route: string
 
 async function openWorkbench(page: Page, baseURL: string) {
   const status = await get<{ root: string }>(page.request, baseURL, '/status')
+  await post(page.request, baseURL, '/root', { path: status.root })
   await page.addInitScript((root) => localStorage.setItem('workbench.selectedRoot', root), status.root)
   await page.setViewportSize({ width: 1600, height: 1000 })
   await page.goto(baseURL)
@@ -185,21 +209,36 @@ async function expectPaintedLabel(svg: Locator, gid: string, text: string) {
 
 test('Codex template proposal requires application and fresh validation before save', { tag: '@feature:workbench.template-codex' }, async ({ page, app }, testInfo) => {
   const instance = await app({ noProject: true, env: deterministicCodex(testInfo) })
+  const inputs = {
+    code: `from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+table = pd.read_excel(Path(__file__).with_name("data.xlsx"))
+fig, ax = plt.subplots()
+ax.plot(table["x"], table["y"])
+fig.tight_layout()
+`,
+    data: { columns: ['x', 'y'], index: [2, 3], values: [[1, 3], [2, 5]], dtypes: ['int64', 'int64'], row_sources: [2, 3], column_sources: [1, 2], row_count: 2, column_count: 2, source: { filename: 'fixture.xlsx' } },
+    schema: { ...SCHEMA, input_format: 'excel', code_filename: 'source.py' },
+  }
+  const { job_id } = await post<{ job_id: string }>(page.request, instance.baseURL, '/templates/validate', inputs)
+  await expect.poll(async () => (await get<{ status: string }>(page.request, instance.baseURL, `/jobs/${job_id}`)).status, { timeout: 90_000 }).toBe('success')
+  const axes = { rows: { mode: 'any' }, columns: { mode: 'fixed', value: 2 } }
+  const { schema } = await post<{ schema: unknown }>(page.request, instance.baseURL, `/jobs/${job_id}/dimensions`, { ...inputs, dimensions: axes })
+  const seed = await post<{ id: string }>(page.request, instance.baseURL, '/templates', { ...inputs, schema, run_id: job_id, name: 'Existing template', scope: 'global' })
   await openWorkbench(page, instance.baseURL)
   await page.locator('[data-wb-nav-templates]').click()
-  await page.locator('[data-wb-template-create]').click()
+  await page.locator(`[data-wb-template-card="${seed.id}"] [data-wb-template-open]`).click()
   const code = page.locator('[data-wb-code]')
   const originalCode = await code.inputValue()
   const save = page.locator('[data-wb-template-save]')
-  await page.locator('[data-wb-template-run]').click()
-  await expect(save).toBeEnabled({ timeout: 90_000 })
   await expectLoadedImage(page.locator('[data-wb-preview-image]'))
   const previousPreview = await page.locator('[data-wb-preview-image]').getAttribute('src')
   const name = page.getByLabel('模板名称')
   await name.fill('原始模板草稿')
   page.on('dialog', (dialog) => void dialog.accept())
   await propose(page, '[data-wb-template-assistant]', async () => {
-    await page.locator('[data-wb-assistant-close]').click()
+    await page.locator('[data-wb-assistant-minimize]').click()
     await page.locator('[data-wb-nav-home]').click()
     await page.locator('[data-wb-nav-templates]').click()
     await page.locator('[data-wb-template-create]').click()
@@ -222,10 +261,11 @@ test('Codex template proposal requires application and fresh validation before s
   await expect(code).toHaveValue(new RegExp(TITLE))
   await expect(save).toBeDisabled()
   await page.locator('[data-wb-template-run]').click()
+  await page.locator('[data-wb-dimensions-confirm]').click({ timeout: 90_000 })
   await expect(save).toBeEnabled({ timeout: 90_000 })
   await expectLoadedImage(page.locator('[data-wb-preview-image]'))
   await expect(page.locator('[data-wb-preview-image]')).not.toHaveAttribute('src', previousPreview!)
-  const savedResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url() === `${instance.baseURL}/api/workbench/templates`)
+  const savedResponse = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url() === `${instance.baseURL}/api/workbench/templates/${seed.id}`)
   await expectUsable(page, save)
   await save.click()
   const saved = await (await savedResponse).json() as { id: string; revision: number; code: string; preview_url: string }
@@ -238,8 +278,57 @@ test('Codex template proposal requires application and fresh validation before s
   const png = await page.request.get(`${instance.baseURL}${saved.preview_url}`)
   expect(png.ok()).toBe(true)
   expect((await png.body()).subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  await card.locator('button:has(img)').click()
+  await card.locator('[data-wb-template-open]').click()
   await expect(page.locator('[data-wb-code]')).toHaveValue(saved.code)
+})
+
+test('Reference template continues in the background and applies a verified revision', { tag: '@feature:workbench.template-imitation' }, async ({ page, app }, testInfo) => {
+  const instance = await app({ noProject: true, env: deterministicCodex(testInfo) })
+  await openWorkbench(page, instance.baseURL)
+  await page.locator('[data-wb-nav-templates]').click()
+  await page.locator('[data-wb-template-create]').click()
+  await expect(page.locator('[data-wb-template-assistant]')).toHaveCount(0)
+  await page.locator('[data-wb-template-imitation]').click()
+  const modal = page.locator('[data-dialog="workbench-imitation"]')
+  const raw = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 90
+    canvas.height = 48
+    canvas.getContext('2d')!.fillRect(18, 12, 50, 21)
+    return canvas.toDataURL().split(',')[1]
+  })
+  const transfer = await page.evaluateHandle((encoded) => {
+    const data = new DataTransfer()
+    data.items.add(new File([Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0))], 'reference.png', { type: 'image/png' }))
+    return data
+  }, raw)
+  await modal.locator('[data-wb-imitation-drop]').dispatchEvent('drop', { dataTransfer: transfer })
+  await transfer.dispose()
+  await page.locator('[data-wb-imitation-start]').click()
+  await expect(modal.locator('[data-state="running"]').filter({ visible: true })).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await expect(modal).toHaveCount(0)
+  const chip = page.locator('[data-wb-imitation-chip]')
+  await expect(chip).toBeVisible()
+  await expect(chip).toContainText('仿图模板已就绪', { timeout: 60_000 })
+  await chip.click()
+  await page.screenshot({ path: testInfo.outputPath('imitation-review.png'), animations: 'disabled' })
+  await expect(modal.locator('[data-code-block]')).toContainText('read_excel')
+  await expect(modal.locator('[data-wb-data-preview]')).toContainText('3 行 × 2 列')
+  await page.locator('[data-wb-imitation-adjust]').click()
+  await page.locator('[data-wb-imitation-request]').fill('图例放在右下')
+  await page.locator('[data-wb-imitation-send]').click()
+  await expect(modal.locator('[data-code-block]')).toContainText('lower right', { timeout: 60_000 })
+  const response = page.waitForResponse((result) => result.request().method() === 'POST' && /\/imitation\/[^/]+\/apply$/.test(result.url()))
+  await page.locator('[data-wb-imitation-apply]').click()
+  const saved = await (await response).json()
+  expect(saved.description).toBe('Synthetic sample data for reuse')
+  expect(saved.schema.columns).toEqual({ mode: 'fixed', value: 2 })
+  expect(saved.code).toContain('lower right')
+  await expect(modal).toContainText('已添加到模板库')
+  const image = await page.request.get(`${instance.baseURL}${saved.preview_url}`)
+  expect((await image.body()).subarray(0, 4)).toEqual(Buffer.from([137, 80, 78, 71]))
+  expect(await get(page.request, instance.baseURL, '/imitation')).toEqual({ task: null })
 })
 
 test('Codex figure proposal preserves overrides through verified save and reopen', { tag: '@feature:workbench.tavotto-codex' }, async ({ page, app }, testInfo) => {
@@ -270,7 +359,7 @@ test('Codex figure proposal preserves overrides through verified save and reopen
   page.on('request', (request) => { if (request.url().includes('/assistant/runs/') && request.url().endsWith('/cancel')) cancelled.push(request.url()) })
   page.on('dialog', (dialog) => void dialog.accept())
   await propose(page, '[data-wb-tavotto-assistant]', async () => {
-    await page.locator('[data-wb-assistant-close]').click()
+    await page.locator('[data-wb-assistant-minimize]').click()
     await expect(page.locator('[data-dialog="workbench-code-assistant"]')).toHaveCount(0)
     await page.locator(`[data-wb-project-nav="${project.id}"]`).click()
     await page.locator(`[data-wb-plot-card="${other.id}"]`).getByText('打开图').click()

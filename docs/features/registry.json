@@ -885,11 +885,27 @@
         "zh-CN": "模板编辑器中的本地 Codex 助手：查看差异、明确应用、重新验证后保存",
         "en-US": "Local Codex template assistance with reviewed application and fresh validation before save"
       },
-      "entry": "模板库 → 创建或编辑模板 → Codex 助手",
+      "entry": "模板库 → 编辑已有模板 → Codex 助手",
       "e2e": [
         {
           "spec": "workbench-codex.spec.ts",
           "title": "Codex template proposal requires application and fresh validation before save"
+        }
+      ]
+    },
+    {
+      "id": "workbench.template-imitation",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "从参考图生成可调整的 Python 和 Excel 模板，经真实绘图验证后入库",
+        "en-US": "Generate and revise a Python and Excel template from a reference image before verified library import"
+      },
+      "entry": "模板库 → 创建模板 → 仿图绘制",
+      "e2e": [
+        {
+          "spec": "workbench-codex.spec.ts",
+          "title": "Reference template continues in the background and applies a verified revision"
         }
       ]
     },

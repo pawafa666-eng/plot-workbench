@@ -22,6 +22,32 @@ def load_module(path, name):
     return module
 
 
+def _stage_excel_inputs(root, context, data_module):
+    snapshot = context["data"]
+    data_module.require_excel_data(snapshot)
+    root.mkdir(exist_ok=True)
+
+    def write(filename, sheets):
+        content = data_module.workbook_bytes(snapshot, sheet_names=sheets)
+        (root / filename).write_bytes(content)
+        return {"path": filename, "sha256": hashlib.sha256(content).hexdigest()}
+
+    alias = context.get("excel_alias")
+    if not alias:
+        return [write("data.xlsx", ("Data",))]
+    filename, sheet = alias["filename"], alias["sheet"]
+    if filename.casefold() == "data.xlsx":
+        sheets = ("Data", sheet) if sheet.casefold() != "data" else ("Data",)
+        standard = write("data.xlsx", sheets)
+        return [standard if filename == "data.xlsx" else {**standard, "read_as": filename}]
+    standard = write("data.xlsx", ("Data",))
+    if sheet == "Data":
+        return [{**standard, "read_as": filename}]
+    # Keep a single discoverable Excel workbook for scripts using glob("*.xlsx").
+    selected = write(".excel-selection", (sheet,))
+    return [standard, {**selected, "read_as": filename}]
+
+
 def run(directory):
     directory = Path(directory).resolve()
     context = json.loads((directory / "input.json").read_text("utf-8"))
@@ -57,14 +83,15 @@ def run(directory):
         )
         return
     excel = (context.get("schema") or {}).get("input_format") == "excel"
+    input_files = []
     if excel:
-        data_module.require_excel_data(context.get("data"))
         input_root = directory / "inputs"
-        input_root.mkdir(exist_ok=True)
-        (input_root / "data.xlsx").write_bytes(data_module.workbook_bytes(context["data"]))
+        input_files = _stage_excel_inputs(input_root, context, data_module)
         (input_root / "source.py").write_text((directory / "base.py").read_text("utf-8"), "utf-8")
         context["working_directory"] = str(input_root)
         context["original_path"] = str(input_root / "source.py")
+        context["input_directory"] = str(input_root)
+        context["input_files"] = input_files
         # Adapter and safe worker receive the same isolated input directory.
         (directory / "input.json").write_text(json.dumps(context, ensure_ascii=False), "utf-8")
     import matplotlib
@@ -101,7 +128,21 @@ def run(directory):
             preview_dpi=150,
         )
     )
-    worker.build()
+    try:
+        worker.build()
+    except FileNotFoundError as error:
+        if (
+            excel
+            and isinstance(error.filename, str)
+            and (missing := Path(error.filename)).suffix.lower() in (".xlsx", ".xls")
+        ):
+            aliases = [item["read_as"] for item in input_files if "read_as" in item]
+            available = "、".join(["data.xlsx", *aliases])
+            raise ValueError(
+                f"脚本找不到工作簿 {missing.name}。本次 Excel 选区可通过同级文件名 {available} 读取。"
+                "请检查代码中的读取路径，或选择文件名与工作表名相符的工作簿。"
+            ) from error
+        raise
     outputs, snapshot = sys.modules["adapter"].PWB_RESULT
     with matplotlib.rc_context({"pdf.fonttype": 42, "ps.fonttype": 42, "svg.fonttype": "none"}):
         for output in outputs:
@@ -119,18 +160,6 @@ def run(directory):
     # Persist observed project inputs, not the original workbook's future state.
     # The engine observation reports its known blind channels explicitly.
     inputs = worker._inputs_report or {}
-    input_files = (
-        [
-            {
-                "path": "data.xlsx",
-                "sha256": hashlib.sha256(
-                    (directory / "inputs" / "data.xlsx").read_bytes()
-                ).hexdigest(),
-            }
-        ]
-        if excel
-        else []
-    )
     project_root = Path(context.get("working_directory") or directory).resolve()
     (directory / "inputs").mkdir(exist_ok=True)
     for item in inputs.get("files", []) + inputs.get("local_modules", []):
@@ -155,6 +184,8 @@ def run(directory):
         "dpi": 600,
         "outputs": outputs,
         "input_files": input_files,
+        "workbook_read": excel
+        and any(item.get("path") == "data.xlsx" for item in inputs.get("files", [])),
         "input_observation": {
             k: v for k, v in inputs.items() if k not in ("files", "local_modules")
         },

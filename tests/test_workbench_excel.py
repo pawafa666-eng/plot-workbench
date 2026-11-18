@@ -3,6 +3,7 @@
 import io
 import time
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from flask import Flask
@@ -44,6 +45,102 @@ def test_selected_workbook_contains_only_final_data_and_literal_strings():
     book = load_workbook(io.BytesIO(workbook_bytes(snapshot)), data_only=False)
     assert list(book["Data"].values) == [("City", "Value"), ("=1+2", 10), ("B", 20)]
     assert book["Data"]["A2"].data_type == "s"
+
+
+def test_standalone_excel_script_reads_the_selected_sheet_under_its_original_name(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "state"))
+    manager = WorkbenchManager(tmp_path / "library")
+    app = Flask(__name__)
+    app.register_blueprint(create_blueprint(manager))
+    client = app.test_client()
+    project_dir = tmp_path / "项目"
+    project_dir.mkdir()
+    project = manager.store.create_project("Project", project_dir)
+    plot = manager.store.create_plot(project["id"], "Plot")
+    source_dir = tmp_path / "原脚本"
+    source_dir.mkdir()
+    source = source_dir / "代码.py"
+    code = """from pathlib import Path
+from openpyxl import load_workbook
+import matplotlib.pyplot as plt
+
+if __name__ == "__main__":
+    with_path = Path(__file__).with_name("数据.xlsx")
+    assert [path.name for path in with_path.parent.glob("*.xlsx")] == ["data.xlsx"]
+    book = load_workbook(with_path, read_only=True)
+    rows = list(book["数据"].values)
+    book.close()
+    assert rows == [("value",), (10,), (20,)], rows
+    fig, ax = plt.subplots(figsize=(3, 2))
+    ax.plot([row[0] for row in rows[1:]])
+    ax.set_xlabel("Selected rows")
+"""
+    source.write_text(code, "utf-8")
+    book = Workbook()
+    book.active.title = "数据"
+    for row in (("unused", "value"), ("A", 10), ("B", 20), ("C", 500)):
+        book.active.append(row)
+    workbook = source_dir / "数据.xlsx"
+    book.save(workbook)
+    original_bytes = workbook.read_bytes()
+    try:
+        data_api = "/api/workbench/data"
+        response = client.post(
+            f"{data_api}/inspect",
+            data={"file": (io.BytesIO(original_bytes), workbook.name), "sheet": "数据"},
+        )
+        assert response.status_code == 200, response.get_json()
+        selected_data = client.post(
+            f"{data_api}/select",
+            json={
+                "table_id": response.get_json()["table_id"],
+                "rows": [{"start": 1, "end": 3}],
+                "columns": [{"start": 2, "end": 2}],
+                "header": True,
+            },
+        ).get_json()["data"]
+        plot_api = f"/api/workbench/plots/{plot['id']}"
+        render = client.post(
+            f"{plot_api}/render",
+            json={
+                "code": code,
+                "data": selected_data,
+                "schema": {"input_format": "excel"},
+                "original_path": str(source),
+            },
+        )
+        assert render.status_code == 200, render.get_json()
+        job = render.get_json()["job_id"]
+        wait(client, job)
+        saved = client.post(f"{plot_api}/save", json={"run_id": job})
+        assert saved.status_code == 200, saved.get_json()
+        record = manager.store.get_plot(plot["id"])
+        standard, alias = record["input_files"]
+        assert standard["path"] == "data.xlsx"
+        assert alias["read_as"] == "数据.xlsx"
+        inputs = Path(record["_artifact_dir"]) / "inputs"
+        for item, sheet in ((standard, "Data"), (alias, "数据")):
+            with (inputs / item["path"]).open("rb") as file:
+                staged = load_workbook(file, read_only=True)
+                assert list(staged[sheet].values) == [("value",), (10,), (20,)]
+                staged.close()
+        with ZipFile(io.BytesIO(client.get(f"{plot_api}/code-package").data)) as package:
+            assert any(name.endswith(f"/inputs/{alias['path']}") for name in package.namelist())
+        session = manager.service.open_session(plot["id"])
+        sid = session["session_id"]
+        patch = {"gid": "axes_0.xlabel", "prop": "text", "value": "Verified rows"}
+        manager.service.session_render(sid, [patch])
+        finished = manager.service.finish_session(sid, [patch])
+        assert finished["overrides"] == [patch]
+        reopened = manager.service.open_session(plot["id"])
+        assert reopened["overrides"] == [patch]
+        manager.service.cancel_session(reopened["session_id"])
+        assert workbook.read_bytes() == original_bytes
+        assert source.read_text("utf-8") == code
+    finally:
+        manager.service.close()
 
 
 @pytest.mark.parametrize(

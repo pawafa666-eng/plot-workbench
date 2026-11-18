@@ -1,6 +1,6 @@
-/** Plot Workbench fork identity; inherited file/clipboard identifiers stay compatible. */
+/** Pawafa Plot identity; inherited file and clipboard identifiers stay compatible. */
 /**
- * 品牌与格式标识的唯一出处。产品正式名称 Tavotto，拼写与大小写固定，
+ * 品牌与格式标识的唯一出处。产品正式名称 Pawafa Plot，拼写与大小写固定，
  * 界面任何地方不得再手写产品名。
  *
  * **这一档没有 LEGACY_*，是有意的**（与 `engine/brand.py` 同源的决定）：
@@ -9,7 +9,7 @@
  * 只认两代前的名字、却不认上一代的，那种半吊子状态比干净断裂更难解释。
  * 文档 schema 的迁移（`migrateToProject`，接受 schema 2/3）是另一回事，照旧。
  */
-export const PRODUCT_NAME = 'Plot Workbench'
+export const PRODUCT_NAME = 'Pawafa Plot'
 export const PRODUCT_NAME_ZH = '绘图工作台'
 export const UPSTREAM_URL = 'https://github.com/Tavotto/Tavotto'
 

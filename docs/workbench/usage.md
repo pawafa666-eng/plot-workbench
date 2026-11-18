@@ -1,6 +1,6 @@
 # 绘图工作台使用说明
 
-Plot Workbench 是在本机运行的科研绘图工作台。Windows x64 安装包自带 Python、Matplotlib、pandas、seaborn、openpyxl 和 xlrd；绘图与 Excel 读取无需另装 Python。
+Pawafa Plot 是在本机运行的科研绘图工作台。Windows x64 安装包自带 Python、Matplotlib、pandas、seaborn、openpyxl 和 xlrd；绘图与 Excel 读取无需另装 Python。
 
 ## 菜单与设置
 
@@ -16,7 +16,7 @@ Plot Workbench 是在本机运行的科研绘图工作台。Windows x64 安装�
 
 删除项目只回收工作台所属内容，不移动所选工作目录及其原始文件。旧版外部项目仅取消登记，可在回收站恢复。脚本自行执行的其他文件写入仍按其代码运行；工作台接管 Matplotlib 图片输出，不会替脚本猜测文件路径。
 
-模板库分为全局模板和项目模板，可分类、移动和收藏；收藏只添加标记。创建图时会复制模板的代码和数据，因此修改原模板不会改动已有的图。通过 **上传 Python 模板** 导入本机 `.py` 文件，或点击 **创建模板** 编写代码，运行验证后保存。
+模板库分为全局模板和项目模板，可分类、移动和收藏；收藏只添加标记。创建图时会复制模板的代码和数据，因此修改原模板不会改动已有的图。在模板库点击 **创建模板**，再从编辑页上传本机 Python 代码和 Excel 数据，运行验证后保存。
 
 ## 创建和使用配色方案
 
@@ -50,15 +50,17 @@ Plot Workbench 是在本机运行的科研绘图工作台。Windows x64 安装�
 
 高级编辑器使用继承自 Tavotto 的画布和渲染引擎。脚本写回沿用 prepare → verify → commit 校验；失败时不替换原脚本。**首次成功完成 图内编辑后，该图转为 图内编辑模式**，普通代码编辑器、数据和模板保持只读；后续通过 Tavotto 调整，或使用其 **Codex 助手** 修改绘图代码。若要更换基础数据或模板，请新建一张图。
 
-## 使用 Codex 写代码和改图
+## 仿图绘制
 
 在 **创建模板 → 仿图绘制** 中拖入一张 PNG、JPEG 或 WebP 图片，再选择 Codex 模型并开始创建。参考图会发送给选中的模型。工作台生成合成示例数据，制作同级的 `source.py` 与 `data.xlsx`，运行验证后提供图形、代码、表格、备注和行列要求供检查。关闭对话框后可从右下角返回；**调整**沿用上一份已验证草稿，**应用**写入创建页所选模板库及分类，**删除**清理本次临时文件。
+
+## 使用 Codex 写代码和改图
 
 在 **编辑已有模板** 页面点击 **Codex 助手**，打开居中的 **Codex 对话** 窗口，右上角可放大或还原。按 **Enter** 发送、**Shift + Enter** 换行。对话保留本次消息，后续要求可以接着修改草稿。查看运行对比后点击 **应用到模板代码**，再 **运行并验证 → 保存模板**。
 
 在 **图内编辑** 页面，等待画布同步后点击 **Codex 助手**。生成后点击 **运行并查看对比**；候选代码在独立 worker 中运行，保留当前数据和已做的图内编辑。确认对比后点击 **应用到当前图形**。应用时会再次运行候选；若图像与预览不一致，软件会拒绝应用并要求重新预览。出图数量变化、已有编辑无法重放或候选运行失败时也不替换当前画布。应用成功后仍需点击 **完成并保存**，所有受影响图形都通过热态与重放的几何、像素校验后才写入项目。**取消本次编辑** 不保存这些候选修改。
 
-仿图和两个 Codex 助手入口共用 **设置 → Codex 助手** 选定的 CLI 与登录状态。模型列表优先取自该 CLI 的模型目录，无法查询时用本地配置和缓存。配置中的默认模型已离开当前目录时，「自动」选择目录推荐的默认模型。若列表缺少较新的模型，可在设置中核对 CLI 版本和可执行文件，更新 CLI 或选择较新的可执行文件后重新检测。GPT‑6.2 Sol 已用 Codex CLI 0.170.0 验证。软件保留你现有的 Codex 配置和登录。
+仿图和两个 Codex 助手入口共用 **设置 → Codex 助手** 中的 CLI 与登录状态。自动检测会优先选择能启动的较新 Codex CLI，手动指定路径时优先使用该路径。模型列表优先取自该 CLI 的模型目录，无法查询时用本地配置和缓存。配置中的默认模型已离开当前目录时，「自动」选择目录推荐的默认模型。若列表缺少较新的模型，可在设置中核对 CLI 版本和可执行文件，更新 CLI 或选择较新的可执行文件后重新检测。新模型是否能使用取决于所选 CLI 与当前登录账号。软件保留你现有的 Codex 配置和登录。
 
 点击 **发送** 会向所选 Codex 服务发送当前代码、本轮要求、当前对话的近期完整消息、数据规范及列名／类型／行列数量；图内编辑还附带当前图内编辑信息。不会自动附加表格中的数据值，代码和图内文字本身的内容仍属于发送上下文。Codex 只在工作台的数据缓存目录中修改代码副本。关闭对话窗口不会停止任务；可以继续使用工作台，并通过右下角的提示查看对话或返回原图／模板。对话在应用、结束对话、关闭软件或更换工作台目录后结束；目前同时保留一段 Codex 对话。代码、数据、目标图或会话变化时，旧草稿不能应用，继续发送会开始新的上下文。
 
@@ -74,14 +76,14 @@ Windows 配置保存在 `%APPDATA%\PlotWorkbench`，缓存和日志保存在 `%L
 
 ## 安装与构建
 
-从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载 Windows x64 的 `Setup.exe`，双击安装，完成后从开始菜单启动 **Plot Workbench**。卸载使用 Windows「已安装的应用」。更新包使用 minisign 签名；安装程序目前没有 Windows Authenticode 发布者证书。
+从 [GitHub Releases](https://github.com/pawafa666-eng/plot-workbench/releases/latest) 下载 Windows x64 的 `Setup.exe`，双击安装，完成后从开始菜单启动 **Pawafa Plot**。卸载使用 Windows「已安装的应用」。更新包使用 minisign 签名；安装程序目前没有 Windows Authenticode 发布者证书。
 
-检查新版本时，点击工作台右上角齿轮「设置」，在「关于与更新 → 检查更新」中按「立即检查」。也可使用原生菜单进入该页。启动软件和打开设置页都不会自动检查。发现新版本后可确认下载并安装，安装前验证更新签名；安装完成后重启软件。早期 1.0.0 用户需要手动覆盖安装一次带更新器的版本。
+检查新版本时，点击工作台右上角齿轮「设置」，在「关于与更新 → 检查更新」中按「立即检查」。也可使用原生菜单进入该页。启动软件和打开设置页都不会自动检查。发现新版本后可确认下载并安装，安装前验证更新签名；安装完成后重启软件。从早期 Plot Workbench 1.x 切换到 Pawafa Plot v0.1 时，请从 Releases 手动安装。
 
-开发构建运行 `python scripts/workbench_build.py`。完整 Windows 构建需要 Python 打包依赖、pnpm、Rust 与 MSVC/Windows SDK；仓库的 **Plot Workbench Windows** GitHub Actions 使用 Windows runner 构建，验证安装、运行与卸载后才上传安装包。
+开发构建运行 `python scripts/workbench_build.py`。完整 Windows 构建需要 Python 打包依赖、pnpm、Rust 与 MSVC/Windows SDK；仓库的 **Pawafa Plot Windows** GitHub Actions 使用 Windows runner 构建，验证安装、运行与卸载后才上传安装包。
 
 日常修改完成后先验证与验收，只有用户明确决定发布时才确定新版本、打标签和准备发行草稿。标签构建通过也只保留草稿；公开发布按 [更新与发布说明](updating.md) 由维护者在用户决定后手动完成。
 
 ## 开源与来源
 
-本项目基于 [Tavotto v0.18.0](https://github.com/Tavotto/Tavotto)，保留其作者署名、AGPL-3.0-only 许可、安全边界和渲染协议。修改后的完整源码见 [Plot Workbench](https://github.com/pawafa666-eng/plot-workbench)，上游基准提交为 `71c72fdb48f28411bd76a021e5d78d2005e76c8a`。安装包包含 LICENSE 和 ATTRIBUTION.txt。
+本项目基于 [Tavotto v0.18.0](https://github.com/Tavotto/Tavotto)，保留其作者署名、AGPL-3.0-only 许可、安全边界和渲染协议。修改后的完整源码见 [Pawafa Plot](https://github.com/pawafa666-eng/plot-workbench)，上游基准提交为 `71c72fdb48f28411bd76a021e5d78d2005e76c8a`。安装包包含 LICENSE 和 ATTRIBUTION.txt。

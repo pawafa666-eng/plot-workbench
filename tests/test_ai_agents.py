@@ -35,6 +35,7 @@ def _clean(monkeypatch):
     ai_bridge.invalidate_capabilities()
     # 就绪检查会真去 spawn；默认钉成「查不了」，需要它的用例自己覆盖
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
+    monkeypatch.setattr(ai_agents, "store_codex_candidates", lambda: [])
     yield
     ai_bridge.invalidate_capabilities()
 
@@ -287,6 +288,34 @@ def test_desktop_candidates_survive_glob_metacharacters_in_localappdata(tmp_path
     weird = tmp_path / "Users [lab]"
     local, made = _desktop_bin(weird, (("a", "exit 0"),))
     assert ai_agents.desktop_codex_candidates(str(local)) == [made["a"]]
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_codex_prefers_newer_store_cli_unless_user_selected_path(tmp_path, monkeypatch, override):
+    npm = tmp_path / "npm" / "codex.exe"
+    store = tmp_path / "WindowsApps" / "OpenAI.Codex" / "app" / "resources" / "codex.exe"
+    npm.parent.mkdir()
+    npm.touch()
+    _only_desktop(monkeypatch, tmp_path)
+    monkeypatch.setattr(ai_agents, "path_override", lambda _id: str(npm) if override else None)
+    monkeypatch.setattr(
+        ai_agents.shutil, "which", lambda _name, path=None: str(npm) if path is None else None
+    )
+    monkeypatch.setattr(
+        ai_agents,
+        "store_codex_candidates",
+        lambda: [ai_agents.CliCandidate(str(store), "windows_store")],
+    )
+    versions = {str(npm): "codex-cli 0.157.1", str(store): "codex-cli 0.169.0-alpha.11.1"}
+    monkeypatch.setattr(ai_agents, "probe_version", lambda argv: versions[argv[0]])
+    try:
+        selected = ai_agents.resolve(ai_agents.get_agent("codex"), probe_readiness=False)
+        assert (selected.argv, selected.source) == (
+            [str(npm)] if override else [str(store)],
+            "custom" if override else "windows_store",
+        )
+    finally:
+        ai_agents.clear_cache()
 
 
 def test_desktop_bundled_codex_ranks_after_directory_locations(tmp_path, monkeypatch):

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Plot Workbench",
+  "productName": "Pawafa Plot",
   "mainBinaryName": "PlotWorkbench",
-  "version": "1.3.9",
+  "version": "0.1.0",
   "identifier": "io.github.pawafa666-eng.plotworkbench",
   "build": {
     "frontendDist": "shell"
@@ -52,8 +52,8 @@
       }
     },
     "shortDescription": "绘图工作台 · 本地科研绘图",
-    "publisher": "Plot Workbench contributors",
-    "copyright": "Plot Workbench contributors; derived from Tavotto (AGPL-3.0-only)",
+    "publisher": "Pawafa Plot contributors",
+    "copyright": "Pawafa Plot contributors; derived from Tavotto (AGPL-3.0-only)",
     "homepage": "https://github.com/pawafa666-eng/plot-workbench"
   }
 }

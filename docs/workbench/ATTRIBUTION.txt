@@ -1,5 +1,5 @@
-Plot Workbench / 绘图工作台
-Copyright Plot Workbench contributors.
+Pawafa Plot / 绘图工作台
+Copyright Pawafa Plot contributors, previously credited as Plot Workbench contributors.
 
 This program is a derivative of Tavotto v0.18.0 by erwanjun and Tavotto contributors.
 Upstream source: https://github.com/Tavotto/Tavotto

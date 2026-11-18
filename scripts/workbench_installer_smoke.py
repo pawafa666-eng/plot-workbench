@@ -319,9 +319,12 @@ def main() -> None:
         raise SystemExit("This installer smoke runs on Windows.")
     import winreg
 
+    config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))
+    product_name = config["productName"]
+    binary = config["mainBinaryName"] + ".exe"
     # This smoke installs and uninstalls the actual product, including its
     # registry keys. Never run it over a developer's existing installation.
-    uninstall_key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Plot Workbench"
+    uninstall_key = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{product_name}"
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, uninstall_key) as key:
             existing, _ = winreg.QueryValueEx(key, "UninstallString")
@@ -329,9 +332,9 @@ def main() -> None:
         existing = ""
     if existing:
         raise SystemExit(
-            "Installer smoke requires a clean Windows user without Plot Workbench installed."
+            f"Installer smoke requires a clean Windows user without {product_name} installed."
         )
-    default_shell = Path(os.environ["LOCALAPPDATA"]) / "Plot Workbench" / "PlotWorkbench.exe"
+    default_shell = Path(os.environ["LOCALAPPDATA"]) / product_name / binary
     if default_shell.exists():
         raise SystemExit("Installer smoke requires the default install location to be empty.")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -343,12 +346,10 @@ def main() -> None:
     baseline = args.baseline_installer.resolve(strict=True) if args.baseline_installer else None
     if bool(baseline) != bool(args.baseline_version):
         parser.error("--baseline-installer and --baseline-version must be supplied together")
-    expected_version = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))[
-        "version"
-    ]
-    with tempfile.TemporaryDirectory(prefix="plot-workbench-install-") as scratch:
+    expected_version = config["version"]
+    with tempfile.TemporaryDirectory(prefix="pawafa-plot-install-") as scratch:
         work = Path(scratch)
-        install = work / "中文 安装目录" / "Plot Workbench"
+        install = work / "中文 安装目录" / product_name
         env = dict(os.environ)
         for name in (
             "PYTHONHOME",
@@ -378,7 +379,7 @@ def main() -> None:
         run(command, env)
         sidecar = install / "sidecar" / "Tavotto" / "Tavotto.exe"
         bundled = sidecar.parent / "_internal" / "runtime" / "python.exe"
-        shell = install / "PlotWorkbench.exe"
+        shell = install / binary
         try:
             for path in (sidecar, bundled, shell, install / "LICENSE", install / "ATTRIBUTION.txt"):
                 if not path.is_file():
@@ -416,7 +417,6 @@ def main() -> None:
                 raise RuntimeError(f"Wrong updated version: {after_version}")
             # The current registration must remain sufficient if the historical
             # manufacturer cache has gone missing. This runs only in the clean CI user.
-            config = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text("utf-8"))
             cache_key = rf"Software\{config['bundle']['publisher']}\{config['productName']}"
             with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER, cache_key, 0, winreg.KEY_SET_VALUE

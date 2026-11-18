@@ -124,7 +124,12 @@ def build_manifest(
 
 def validate_published_assets(manifest: dict, release: dict) -> None:
     """Compare URLs against GitHub's actual names before exposing the draft."""
-    if release.get("tag_name") != f"v{manifest['version']}":
+    tag = release.get("tag_name")
+    if (
+        not isinstance(tag, str)
+        or not tag.startswith("v")
+        or version_for_tag(tag) != manifest["version"]
+    ):
         raise SystemExit("The uploaded release assets belong to a different version")
     urls = set()
     for asset in release.get("assets", []):
@@ -146,6 +151,12 @@ def validate_published_assets(manifest: dict, release: dict) -> None:
             )
 
 
+def version_for_tag(tag: str) -> str:
+    if tag == brand.WORKBENCH_FIRST_RELEASE_TAG:
+        return brand.WORKBENCH_FIRST_RELEASE
+    return tag.removeprefix("v")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--artifacts", required=True, type=Path, help="收集到的产物目录（递归扫描）")
@@ -162,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.notes_file and args.notes:
         ap.error("--notes 与 --notes-file 只能选一个")
     notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else args.notes
-    version = args.tag[1:] if args.tag.startswith("v") else args.tag
+    version = version_for_tag(args.tag)
     require = [k.strip() for k in args.require.split(",") if k.strip()]
     manifest = build_manifest(
         args.artifacts, version, args.tag, args.owner, args.repo, notes, require

@@ -67,6 +67,44 @@ def test_draft_temporary_urls_are_checked_against_actual_uploaded_names(tmp_path
         mod.validate_published_assets(manifest, release)
 
 
+def test_first_public_tag_keeps_semver_in_actual_update_manifest(tmp_path):
+    name = "Pawafa.Plot_0.1.0_x64-setup.nsis.zip"
+    _artifact(tmp_path / "updater", name)
+    url = f"{mod.brand.REPO_URL}/releases/download/v0.1/{name}"
+    release = tmp_path / "release.json"
+    release.write_text(
+        json.dumps(
+            {
+                "tag_name": "v0.1",
+                "assets": [
+                    {"browser_download_url": url},
+                    {"browser_download_url": url + ".sig"},
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    output = tmp_path / "latest.json"
+    assert (
+        mod.main(
+            [
+                "--artifacts",
+                str(tmp_path / "updater"),
+                "--tag",
+                "v0.1",
+                "--published-release",
+                str(release),
+                "--out",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    manifest = json.loads(output.read_text("utf-8"))
+    assert manifest["version"] == "0.1.0"
+    assert manifest["platforms"]["windows-x86_64"]["url"] == url
+
+
 def test_cli_rejects_an_update_url_absent_from_actual_uploaded_assets(tmp_path):
     _artifact(tmp_path / "updater", "Plot Workbench_1.0.9_x64-setup.nsis.zip")
     metadata = tmp_path / "release.json"
@@ -108,7 +146,7 @@ def test_cli_rejects_an_update_url_absent_from_actual_uploaded_assets(tmp_path):
 
 def test_two_platforms_land_in_one_manifest(tmp_path):
     """两条 matrix 腿各自上传的产物，拼成同一份清单。"""
-    _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz", "MAC-SIG\n")
+    _artifact(tmp_path / "desktop-tauri-dmg", "Pawafa Plot.app.tar.gz", "MAC-SIG\n")
     _artifact(tmp_path / "desktop-tauri-nsis", "Plot Workbench_0.7.0_x64-setup.nsis.zip", "WIN-SIG")
 
     man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "更新说明")
@@ -126,7 +164,7 @@ def test_two_platforms_land_in_one_manifest(tmp_path):
 
 def test_missing_signature_is_a_hard_error(tmp_path):
     """有包没签名 = 装到一半才发现对不上。宁可不发清单。"""
-    _artifact(tmp_path, "Plot Workbench.app.tar.gz", sig=None)
+    _artifact(tmp_path, "Pawafa Plot.app.tar.gz", sig=None)
     with pytest.raises(SystemExit, match="没有配套的 .sig"):
         mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
 
@@ -153,27 +191,25 @@ def test_each_mac_arch_gets_exactly_its_own_package(tmp_path):
     会同时认下两个包，靠先后顺序决定谁赢——把一个装不上的更新推给另一个架构的
     用户，比「查不到更新」糟糕得多。所以两条都是精确名，互换目录顺序也不影响。
     """
-    _artifact(
-        tmp_path / "desktop-tauri-dmg-intel", "Plot Workbench-Intel.app.tar.gz", "INTEL-SIG\n"
-    )
-    _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz", "ARM-SIG\n")
+    _artifact(tmp_path / "desktop-tauri-dmg-intel", "Pawafa Plot-Intel.app.tar.gz", "INTEL-SIG\n")
+    _artifact(tmp_path / "desktop-tauri-dmg", "Pawafa Plot.app.tar.gz", "ARM-SIG\n")
     man = mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
-    assert man["platforms"]["darwin-aarch64"]["url"].endswith("/Plot.Workbench.app.tar.gz")
+    assert man["platforms"]["darwin-aarch64"]["url"].endswith("/Pawafa.Plot.app.tar.gz")
     assert man["platforms"]["darwin-aarch64"]["signature"] == "ARM-SIG"
-    assert man["platforms"]["darwin-x86_64"]["url"].endswith("/Plot.Workbench-Intel.app.tar.gz")
+    assert man["platforms"]["darwin-x86_64"]["url"].endswith("/Pawafa.Plot-Intel.app.tar.gz")
     assert man["platforms"]["darwin-x86_64"]["signature"] == "INTEL-SIG"
 
 
 def test_an_unknown_mac_package_name_is_not_claimed_by_either_arch(tmp_path):
     """名字对不上精确名的 .app.tar.gz 不进清单——不猜它是哪个架构。"""
-    _artifact(tmp_path, "Plot Workbench-universal.app.tar.gz")
+    _artifact(tmp_path, "Pawafa Plot-universal.app.tar.gz")
     with pytest.raises(SystemExit, match="一个更新包都没找到"):
         mod.build_manifest(tmp_path, "0.7.0", "v0.7.0", "Tavotto", "Tavotto", "")
 
 
 def test_intel_is_required_alongside_the_other_two(tmp_path):
     """--require 三平台时缺 Intel 那份要报出名字，不是只查「有没有 mac」。"""
-    _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz")
+    _artifact(tmp_path / "desktop-tauri-dmg", "Pawafa Plot.app.tar.gz")
     _artifact(tmp_path / "desktop-tauri-nsis", "Plot Workbench_0.7.0_x64-setup.nsis.zip")
     with pytest.raises(SystemExit, match="清单缺平台：darwin-x86_64"):
         mod.build_manifest(
@@ -188,7 +224,7 @@ def test_intel_is_required_alongside_the_other_two(tmp_path):
 
 
 def test_cli_writes_the_file(tmp_path):
-    _artifact(tmp_path / "in", "Plot Workbench.app.tar.gz")
+    _artifact(tmp_path / "in", "Pawafa Plot.app.tar.gz")
     out = tmp_path / "out" / "latest.json"
     assert (
         mod.main(["--artifacts", str(tmp_path / "in"), "--tag", "v1.2.3", "--out", str(out)]) == 0
@@ -196,7 +232,7 @@ def test_cli_writes_the_file(tmp_path):
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["version"] == "1.2.3"
     assert data["platforms"]["darwin-aarch64"]["url"] == (
-        f"{mod.brand.REPO_URL}/releases/download/v1.2.3/Plot.Workbench.app.tar.gz"
+        f"{mod.brand.REPO_URL}/releases/download/v1.2.3/Pawafa.Plot.app.tar.gz"
     )
 
 
@@ -257,7 +293,7 @@ def test_half_a_manifest_is_rejected_when_both_platforms_are_required(tmp_path):
 
 
 def test_require_passes_when_both_are_present(tmp_path):
-    _artifact(tmp_path / "desktop-tauri-dmg", "Plot Workbench.app.tar.gz")
+    _artifact(tmp_path / "desktop-tauri-dmg", "Pawafa Plot.app.tar.gz")
     _artifact(tmp_path / "desktop-tauri-nsis", "Plot Workbench_0.7.0_x64-setup.nsis.zip")
 
     man = mod.build_manifest(

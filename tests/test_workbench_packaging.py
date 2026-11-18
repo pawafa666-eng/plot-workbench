@@ -26,7 +26,7 @@ def test_actual_desktop_config_is_an_independent_fork():
     conf = desktop_config()
     builder.validate_packaging(conf)
     assert conf["plugins"]["updater"] == {"endpoints": [], "pubkey": ""}
-    assert conf["productName"] == brand.PRODUCT_NAME == "Plot Workbench"
+    assert conf["productName"] == brand.PRODUCT_NAME == "Pawafa Plot"
     assert conf["mainBinaryName"] == "PlotWorkbench"
     assert brand.REPO_URL == "https://github.com/pawafa666-eng/plot-workbench"
     assert brand.PACKAGE_EXT == ".tavotto"
@@ -73,11 +73,11 @@ def test_release_packaging_rejects_an_upstream_or_foreign_endpoint():
     release_conf["plugins"]["updater"]["endpoints"] = [
         "https://github.com/Tavotto/Tavotto/releases/latest/download/latest.json"
     ]
-    with pytest.raises(ValueError, match="Plot Workbench"):
+    with pytest.raises(ValueError, match="Pawafa Plot"):
         builder.validate_packaging(release_conf, updater_enabled=True)
 
 
-def test_release_tag_matches_the_desktop_version_and_is_newer_than_installed_baseline(
+def test_release_tag_matches_the_desktop_version_and_first_public_edition(
     monkeypatch,
 ):
     monkeypatch.setattr(builder, "WORKBENCH_VERSION", "1.0.1")
@@ -85,9 +85,14 @@ def test_release_tag_matches_the_desktop_version_and_is_newer_than_installed_bas
     with pytest.raises(ValueError, match="match"):
         builder.validate_release_inputs("v1.0.2", "public-key", "private-key")
 
-    monkeypatch.setattr(builder, "WORKBENCH_VERSION", "1.0.0")
-    with pytest.raises(ValueError, match="higher than 1.0.0"):
-        builder.validate_release_inputs("v1.0.0", "public-key", "private-key")
+    monkeypatch.setattr(builder, "WORKBENCH_VERSION", "0.1.0")
+    builder.validate_release_inputs("v0.1", "public-key", "private-key")
+    with pytest.raises(ValueError, match="match"):
+        builder.validate_release_inputs("v0.1.0", "public-key", "private-key")
+
+    monkeypatch.setattr(builder, "WORKBENCH_VERSION", "0.0.9")
+    with pytest.raises(ValueError, match="at least 0.1.0"):
+        builder.validate_release_inputs("v0.0.9", "public-key", "private-key")
 
 
 @pytest.mark.parametrize(

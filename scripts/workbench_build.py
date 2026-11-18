@@ -23,10 +23,16 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from build_desktop import build_workerd, stage_private_python  # noqa: E402
 from build_worker_runtime import BuildError, check_runtime_dir  # noqa: E402
-from tavotto.engine.brand import DESKTOP_BUNDLE_ID, REPO_URL, WORKBENCH_VERSION  # noqa: E402
+from tavotto.engine.brand import (  # noqa: E402
+    DESKTOP_BUNDLE_ID,
+    PRODUCT_NAME,
+    REPO_URL,
+    WORKBENCH_FIRST_RELEASE,
+    WORKBENCH_FIRST_RELEASE_TAG,
+    WORKBENCH_VERSION,
+)
 
 LOCK = ROOT / "packaging" / "workbench-runtime-lock.json"
-UPDATE_BASELINE_VERSION = (1, 0, 0)
 _UPDATER_ENDPOINT = f"{REPO_URL}/releases/latest/download/latest.json"
 
 
@@ -65,7 +71,7 @@ def _stable_version_parts(version: str) -> tuple[int, int, int] | None:
 
 
 def validate_release_inputs(tag: str, public_key: str, private_key: str) -> None:
-    """Fail before build work unless a newer stable app version can be signed."""
+    """Fail before build work unless the corresponding stable tag can be signed."""
     if not public_key.strip() or not private_key.strip():
         raise ValueError(
             "A stable updater release requires updater signing variables "
@@ -75,16 +81,24 @@ def validate_release_inputs(tag: str, public_key: str, private_key: str) -> None
     current = _stable_version_parts(WORKBENCH_VERSION)
     if current is None:
         raise ValueError("WORKBENCH_VERSION must be a stable three-part SemVer version")
-    if tag != f"v{WORKBENCH_VERSION}":
-        raise ValueError(f"Release tag must match the desktop version v{WORKBENCH_VERSION}")
-    if current <= UPDATE_BASELINE_VERSION:
-        raise ValueError("The first updater release must be higher than 1.0.0")
+    first_release = tuple(int(part) for part in WORKBENCH_FIRST_RELEASE.split("."))
+    expected_tag = (
+        WORKBENCH_FIRST_RELEASE_TAG if current == first_release else f"v{WORKBENCH_VERSION}"
+    )
+    if tag != expected_tag:
+        raise ValueError(
+            f"Release tag must match {expected_tag} for desktop version {WORKBENCH_VERSION}"
+        )
+    if current < first_release:
+        raise ValueError(f"Release version must be at least {WORKBENCH_FIRST_RELEASE}")
 
 
 def validate_packaging(conf: dict, *, updater_enabled: bool = False) -> None:
     """Validate the desktop configuration consumed by this particular build."""
     if conf.get("identifier") != DESKTOP_BUNDLE_ID:
         raise ValueError("Desktop application ID differs from the fork's brand")
+    if conf.get("productName") != PRODUCT_NAME:
+        raise ValueError("Desktop product name differs from engine.brand.PRODUCT_NAME")
     if conf.get("version") != WORKBENCH_VERSION:
         raise ValueError("Desktop version differs from engine.brand.WORKBENCH_VERSION")
     bundle = conf.get("bundle", {})
@@ -98,12 +112,14 @@ def validate_packaging(conf: dict, *, updater_enabled: bool = False) -> None:
             or not isinstance(updater.get("pubkey"), str)
             or not updater["pubkey"].strip()
         ):
-            raise ValueError("Stable updater releases must use the Plot Workbench endpoint and key")
+            raise ValueError(
+                f"Stable updater releases must use the {PRODUCT_NAME} endpoint and key"
+            )
     elif bundle.get("createUpdaterArtifacts") is not False or updater != {
         "endpoints": [],
         "pubkey": "",
     }:
-        raise ValueError("Ordinary Plot Workbench builds must not create updater artifacts")
+        raise ValueError(f"Ordinary {PRODUCT_NAME} builds must not create updater artifacts")
     resources = bundle.get("resources", {})
     if resources.get("../assets/workbench/icon.ico") != "workbench.ico":
         raise ValueError("The installer must include the explicit Windows shortcut icon")
@@ -141,7 +157,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     if sys.platform != "win32":
-        raise SystemExit("The Plot Workbench v1 installer is built on Windows x64.")
+        raise SystemExit(f"The {PRODUCT_NAME} installer is built on Windows x64.")
     os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
     os.environ["TAVOTTO_NO_UPDATE_CHECK"] = "1"
     os.environ["TAVOTTO_REQUIRE_RUNTIME"] = "1"
@@ -192,7 +208,8 @@ def main() -> None:
     installers = list((ROOT / "src-tauri/target/release/bundle/nsis").glob("*.exe"))
     if len(installers) != 1:
         raise SystemExit(f"Expected one NSIS installer, found {len(installers)}")
-    out = ROOT / "dist" / f"Plot-Workbench-{WORKBENCH_VERSION}-Windows-x64-Setup.exe"
+    asset_prefix = PRODUCT_NAME.replace(" ", "-")
+    out = ROOT / "dist" / f"{asset_prefix}-{WORKBENCH_VERSION}-Windows-x64-Setup.exe"
     shutil.copy2(installers[0], out)
     digest = hashlib.sha256(out.read_bytes()).hexdigest()
     out.with_suffix(".exe.sha256").write_text(f"{digest}  {out.name}\n", encoding="ascii")

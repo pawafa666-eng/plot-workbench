@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
+from .brand import APP_DATA_SLUG, PRODUCT_NAME, WORKBENCH_VERSION
 from .runtime import CREATE_NO_WINDOW
 
 #: 候选来源。**只是诊断信息，不参与「能不能用」的判断**——能不能用只看
@@ -233,6 +234,46 @@ def desktop_codex_candidates(localappdata: str | None) -> list[str]:
     return [p for _m, p in hits]
 
 
+def store_codex_candidates() -> list[CliCandidate]:
+    """Find the registered Codex package without enumerating the protected WindowsApps directory."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    family = "OpenAI.Codex_2p2nqsd0c76g0"
+    kernel = ctypes.WinDLL("kernel32")
+    packages = kernel.GetPackagesByPackageFamily
+    packages.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.POINTER(wintypes.UINT),
+        ctypes.POINTER(wintypes.LPWSTR),
+        ctypes.POINTER(wintypes.UINT),
+        wintypes.LPWSTR,
+    ]
+    package_path = kernel.GetPackagePathByFullName
+    package_path.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.UINT), wintypes.LPWSTR]
+    insufficient_buffer = 122
+    count, size = wintypes.UINT(), wintypes.UINT()
+    if packages(family, ctypes.byref(count), None, ctypes.byref(size), None) != insufficient_buffer:
+        return []
+    names = (wintypes.LPWSTR * count.value)()
+    buffer = ctypes.create_unicode_buffer(size.value)
+    if packages(family, ctypes.byref(count), names, ctypes.byref(size), buffer) != 0:
+        return []
+    result = []
+    for name in names[: count.value]:
+        size = wintypes.UINT()
+        if package_path(name, ctypes.byref(size), None) != insufficient_buffer:
+            continue
+        path = ctypes.create_unicode_buffer(size.value)
+        if package_path(name, ctypes.byref(size), path) == 0:
+            executable = os.path.join(path.value, "app", "resources", "codex.exe")
+            if os.path.isfile(executable):
+                result.append(CliCandidate(executable, "windows_store"))
+    return result
+
+
 def search_dirs(name: str) -> list[str]:
     """`search_locations` 的路径视图（`spawn_env` 补 PATH 时用）。"""
     return [loc.path for loc in search_locations(name)]
@@ -381,6 +422,7 @@ class AgentDefinition:
     supports_wire_api: bool = False
     #: 有没有官方的、无副作用的本地登录状态命令
     supports_readiness_probe: bool = False
+    prefer_newest = False
 
     # -- 探测 --------------------------------------------------------------
     def extra_search_locations(self) -> list[SearchLocation]:
@@ -435,6 +477,7 @@ class CodexAgent(AgentDefinition):
     supports_effort_selection = True
     supports_wire_api = True
     supports_readiness_probe = True
+    prefer_newest = True
 
     #: 推理强度档位。**模型名故意不写死**——OpenAI 换代时旧名会被服务端直接
     #: 拒绝（"The 'gpt-5' model is not supported when using Codex with a
@@ -463,12 +506,18 @@ class CodexAgent(AgentDefinition):
         # 与 `tavotto codex install` 同一份探测（desktop_codex_candidates），新到旧；
         # 旧哈希目录里那份起不来时 resolve() 自然落到下一个。
         local = os.environ.get("LOCALAPPDATA")
-        return [CliCandidate(p, "codex_desktop_bundled") for p in desktop_codex_candidates(local)]
+        return [
+            *(CliCandidate(p, "codex_desktop_bundled") for p in desktop_codex_candidates(local)),
+            *store_codex_candidates(),
+        ]
 
     def extra_searched(self) -> list[str]:
         if not _is_windows():
             return []
-        return [desktop_codex_glob(os.environ.get("LOCALAPPDATA"))]
+        return [
+            desktop_codex_glob(os.environ.get("LOCALAPPDATA")),
+            "Microsoft Store: OpenAI.Codex",
+        ]
 
     # -- codex 的模型清单来自自己的配置与只读模型缓存 -----------------------
     @staticmethod
@@ -587,7 +636,13 @@ class CodexAgent(AgentDefinition):
                         {
                             "id": 1,
                             "method": "initialize",
-                            "params": {"clientInfo": {"name": "plot-workbench", "version": "1.0"}},
+                            "params": {
+                                "clientInfo": {
+                                    "name": APP_DATA_SLUG,
+                                    "title": PRODUCT_NAME,
+                                    "version": WORKBENCH_VERSION,
+                                }
+                            },
                         }
                     )
                     if not receive(1):
@@ -965,8 +1020,16 @@ def clear_cache() -> None:
         _RESOLVE_CACHE.clear()
 
 
+def _version_rank(version: str) -> tuple[int, int, int, bool]:
+    found = re.search(r"\b(\d+)\.(\d+)(?:\.(\d+))?(-[\w.-]+)?", version)
+    if found is None:
+        return (0, 0, 0, False)
+    major, minor, patch, prerelease = found.groups()
+    return (int(major), int(minor), int(patch or 0), prerelease is None)
+
+
 def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
-    """逐个候选做启动验证（`--version`），第一个真能跑起来的才算数。
+    """验证候选可启动，保留手动路径或按适配器的规则选择自动候选。
 
     以前拿到第一个候选就宣布「已安装」，用户在别人电脑上撞到的正是这一步：
     WindowsApps 的执行别名存在但无法被子进程启动，探测说装了、运行必失败。
@@ -983,13 +1046,20 @@ def resolve(agent: AgentDefinition, probe_readiness: bool = True) -> Resolution:
     found: CliCandidate | None = None
     argv: list[str] | None = None
     version: str | None = None
+    seen: set[tuple[str, ...]] = set()
     for cand in candidates(agent):
         cand_argv = resolve_shim(cand.path) or [cand.path]
+        identity = tuple(os.path.normcase(part) for part in cand_argv)
+        if identity in seen:
+            continue
+        seen.add(identity)
         got = probe_version(cand_argv)
         if got is not None:
-            found, argv, version = cand, cand_argv, got
-            break
-        if broken is None:
+            if version is None or _version_rank(got) > _version_rank(version):
+                found, argv, version = cand, cand_argv, got
+            if cand.source == "custom" or not agent.prefer_newest:
+                break
+        elif broken is None:
             broken = cand.path
     if argv is None:
         res = Resolution(

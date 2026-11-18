@@ -925,10 +925,10 @@ Section Install
     Pop $R9
     Pop $R7
     ${If} $R9 != 0
-      DetailPrint "Plot Workbench CLI 自检未通过（$R9）: $R7"
+      DetailPrint "Pawafa Plot CLI 自检未通过（$R9）: $R7"
     ${EndIf}
   ${Else}
-    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Plot Workbench"
+    DetailPrint "未找到 $R8：外部程序将改用已知安装位置发现 Pawafa Plot"
   ${EndIf}
   ; TAVOTTO PATCH END ----------------------------------------------------
 

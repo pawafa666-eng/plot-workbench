@@ -1,13 +1,16 @@
-"""Plot Workbench product identity and inherited Tavotto format identifiers.
+"""Pawafa Plot product identity and inherited Tavotto format identifiers.
 
 The authorized fork has its own desktop ID, repository, display name and user
 state directory. Internal Python distribution, file formats and worker protocols
 retain Tavotto identifiers so existing engine contracts remain compatible.
 """
 
-PRODUCT_NAME = "Plot Workbench"
+PRODUCT_NAME = "Pawafa Plot"
 PRODUCT_NAME_ZH = "绘图工作台"
-WORKBENCH_VERSION = "1.3.9"
+WORKBENCH_VERSION = "0.1.0"
+# The first public edition uses a short Git tag; Tauri still requires SemVer.
+WORKBENCH_FIRST_RELEASE = "0.1.0"
+WORKBENCH_FIRST_RELEASE_TAG = "v0.1"
 APP_DATA_NAME = "PlotWorkbench"
 APP_DATA_SLUG = "plot-workbench"
 UPSTREAM_NAME = "Tavotto"

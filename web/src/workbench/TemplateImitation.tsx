@@ -130,7 +130,7 @@ export function TemplateImitationHost({ children, onApplied }: { children: React
     setTarget(destination)
     setApplied(null)
     setOpen(true)
-    if (!task && !caps && !detecting) void detect()
+    if (!task && !detecting) void detect(true)
   }
 
   function choose(file?: File) {
@@ -234,7 +234,8 @@ export function TemplateImitationHost({ children, onApplied }: { children: React
               <label className="wb-field">Codex 模型<Select ariaLabel="Codex 模型" value={model} disabled={detecting || pending}
                 onChange={setModel} options={[{ value: DEFAULT_MODEL, label: info?.default_model ? `自动 · ${info.default_model}` : '使用 Codex 默认模型' },
                   ...(info?.models ?? []).map((name) => ({ value: name, label: name }))]} /></label>
-              <p className="wb-muted">{detecting ? '正在检查本机 Codex…' : info?.usable ? '生成示例使用合成数据。' : 'Codex 不可用，请在设置中检查登录或 CLI 路径。'}</p>
+              <p className="wb-muted">{detecting ? '正在检查本机 Codex…' : info?.usable ? (info.version || '已检测到 Codex CLI') : 'Codex 不可用，请在设置中检查登录或 CLI 路径。'}</p>
+              {info?.usable && !detecting && <p className="wb-muted">缺少模型时，可更新 Codex CLI 或在设置中选择较新的 CLI。</p>}
               <Button variant="secondary" disabled={detecting || pending} onClick={() => void detect(true)}><RefreshCw />重新检测</Button>
             </div>
           </div>}
